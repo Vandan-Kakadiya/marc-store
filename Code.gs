@@ -271,34 +271,103 @@ function pruneRecords_(props) {
   });
 }
 
-/** Run once as the owner. Does not publish or open the Form. No real prices assumed. */
+/** Safe to rerun: reuse saved resources and complete only missing setup pieces. */
 function createStarterForm() {
-  var props=PropertiesService.getScriptProperties();
-  if(props.getProperty('FORM_ID'))throw Error('FORM_ID already exists. Reuse that Form or clear it deliberately before creating another.');
-  var form=FormApp.create('MARC | Polo Orders');
-  props.setProperty('FORM_ID',form.getId());
-  form.setAcceptingResponses(false);
-  form.setCollectEmail(false);
-  form.setDescription('MARC polo collection. Ordering details will be announced by MARC.');
-  form.addTextItem().setTitle('Full name').setHelpText('[marc:name]').setRequired(true);
-  form.addTextItem().setTitle('Email').setHelpText('[marc:email]').setRequired(true);
-  form.addTextItem().setTitle('Phone number').setHelpText('[marc:phone]').setRequired(true);
-  form.addCheckboxItem().setTitle('SKU catalogue').setHelpText('[marc:catalog] Each choice: SKU | Product name | Colour | Size | Price INR | Image (optional)').setChoiceValues(['SETUP REQUIRED: replace this with your real SKU choices']).setRequired(true);
-  form.addParagraphTextItem().setTitle('Order lines').setHelpText('[marc:lines] Filled by the store.').setRequired(true);
-  form.addTextItem().setTitle('Total amount INR').setHelpText('[marc:total] Calculated by the store.').setRequired(true);
-  form.addTextItem().setTitle('UPI transaction ID (UTR)').setHelpText('[marc:transaction] Enter the 12-digit transaction reference from your UPI app.').setRequired(true);
-  form.addTextItem().setTitle('Payment screenshot link').setHelpText('[marc:proof] The website uploads the image to private Drive storage and fills this link.').setRequired(true);
-  form.addListItem().setTitle('Total quantity').setHelpText('[marc:quantity] Change these choices to set the order limit.').setChoiceValues(['1','2','3','4','5']).setRequired(true);
-  form.addParagraphTextItem().setTitle('Comments').setRequired(false);
-  form.addTextItem().setTitle('Source').setHelpText('[marc:source]').setRequired(false);
-  form.addTextItem().setTitle('Request reference').setHelpText('[marc:request]').setRequired(false);
-  var sheet=SpreadsheetApp.create('MARC Polo Orders');
-  form.setDestination(FormApp.DestinationType.SPREADSHEET,sheet.getId());
-  var folder=DriveApp.createFolder('MARC Payment Proofs');
-  props.setProperty('SCREENSHOT_FOLDER_ID',folder.getId());
-  console.log('Form edit: '+form.getEditUrl());console.log('Responses: '+sheet.getUrl());
-  console.log('Private payment proof folder: '+folder.getUrl());
-  console.log('Form is closed. Configure real SKUs, STOREFRONT_URL, PAYMENT_QR_URL, PAYEE_NAME, deadline and payment details, then run inspectForm.');
+  var lock=LockService.getScriptLock();
+  if(!lock.tryLock(10000))throw Error('Another setup is running. Wait for it to finish, then run createStarterForm again.');
+  try {
+    var props=PropertiesService.getScriptProperties();
+    var formId=props.getProperty('FORM_ID'),form,created=false;
+    if(formId){
+      try { form=FormApp.openById(formId); }
+      catch(error){throw Error('The saved FORM_ID cannot be opened with this account. Check its ID and access in Project Settings. The saved ID has been kept; no replacement Form was created.');}
+    }else{
+      form=FormApp.create('MARC | Polo Orders');
+      props.setProperty('FORM_ID',form.getId());
+      created=true;
+      form.setAcceptingResponses(false);
+      form.setCollectEmail(false);
+      form.setDescription('MARC polo collection. Ordering details will be announced by MARC.');
+    }
+    console.log(created?'Created a new Form.':'Reusing the saved Form.');
+    // Print this before later setup calls, so the Form remains easy to find if
+    // a subsequent permission or service error interrupts setup.
+    console.log('Form edit: '+form.getEditUrl());
+    ensureStarterQuestions_(form);
+
+    var destination=form.getDestinationId();
+    var sheetId=destination||props.getProperty('RESPONSE_SHEET_ID'),sheet;
+    if(sheetId){
+      try { sheet=SpreadsheetApp.openById(sheetId); }
+      catch(error){throw Error('The saved response spreadsheet cannot be opened. Check access to it. No replacement spreadsheet was created.');}
+    }else{
+      sheet=SpreadsheetApp.create('MARC Polo Orders');
+      sheetId=sheet.getId();
+    }
+    // Checkpoint before linking: a failed link can resume with this same Sheet.
+    props.setProperty('RESPONSE_SHEET_ID',sheetId);
+    if(!destination)form.setDestination(FormApp.DestinationType.SPREADSHEET,sheetId);
+    console.log('Responses: '+sheet.getUrl());
+
+    var folderId=props.getProperty('SCREENSHOT_FOLDER_ID'),folder;
+    if(folderId){
+      try { folder=DriveApp.getFolderById(folderId); }
+      catch(error){throw Error('The saved payment-proof folder cannot be opened. Check access to it. No replacement folder was created.');}
+    }else{
+      folder=DriveApp.createFolder('MARC Payment Proofs');
+      props.setProperty('SCREENSHOT_FOLDER_ID',folder.getId());
+    }
+    console.log('Private payment proof folder: '+folder.getUrl());
+    console.log('Form status: '+(form.isAcceptingResponses()?'accepting responses':'closed'));
+    console.log('Setup complete. Existing questions, catalogue choices, responses, payment settings and Form opening status were preserved.');
+    console.log('Configure actual SKUs, STOREFRONT_URL, PAYMENT_QR_URL, PAYEE_NAME, deadline and payment details, then run inspectForm.');
+  }finally{lock.releaseLock();}
+}
+
+function ensureStarterQuestions_(form) {
+  var specs=[
+    {role:'name',type:'TEXT',title:'Full name',required:true},
+    {role:'email',type:'TEXT',title:'Email',required:true},
+    {role:'phone',type:'TEXT',title:'Phone number',required:true},
+    {role:'catalog',type:'CHECKBOX',title:'SKU catalogue',required:true,help:'Each choice: SKU | Product name | Colour | Size | Price INR | Image (optional)',choices:['SETUP REQUIRED: replace this with your real SKU choices']},
+    {role:'lines',type:'PARAGRAPH_TEXT',title:'Order lines',required:true,help:'Filled by the store.'},
+    {role:'total',type:'TEXT',title:'Total amount INR',required:true,help:'Calculated by the store.'},
+    {role:'transaction',type:'TEXT',title:'UPI transaction ID (UTR)',required:true,help:'Enter the 12-digit transaction reference from your UPI app.'},
+    {role:'proof',type:'TEXT',title:'Payment screenshot link',required:true,help:'The website uploads the image to private Drive storage and fills this link.'},
+    {role:'quantity',type:'LIST',title:'Total quantity',required:true,help:'Change these choices to set the order limit.',choices:['1','2','3','4','5']},
+    {role:'comments',type:'PARAGRAPH_TEXT',title:'Comments',required:false},
+    {role:'source',type:'TEXT',title:'Source',required:false},
+    {role:'request',type:'TEXT',title:'Request reference',required:false}
+  ];
+  var methods={TEXT:'asTextItem',PARAGRAPH_TEXT:'asParagraphTextItem',CHECKBOX:'asCheckboxItem',LIST:'asListItem'};
+  var addMethods={TEXT:'addTextItem',PARAGRAPH_TEXT:'addParagraphTextItem',CHECKBOX:'addCheckboxItem',LIST:'addListItem'};
+  var existing=form.getItems().map(function(item){
+    var type=String(item.getType()),typed=methods[type]?item[methods[type]]():null;
+    return {item:item,type:type,title:item.getTitle(),typed:typed,help:typed?(typed.getHelpText()||''):''};
+  });
+  // Validate all matches before adding anything. Existing tagged questions may
+  // have been renamed or reordered; retain them and all their live choices.
+  var plan=specs.map(function(spec){
+    var tag='[marc:'+spec.role+']';
+    var matches=existing.filter(function(q){return q.help.toLowerCase().indexOf(tag)!==-1;});
+    if(matches.length>1)throw Error('Multiple questions have '+tag+'. Keep that tag on one question before rerunning setup.');
+    if(!matches.length)matches=existing.filter(function(q){return q.title===spec.title&&!/\[marc:[a-z]+\]/i.test(q.help);});
+    if(matches.length>1)throw Error('Multiple untagged questions are named '+spec.title+'. Add '+tag+' to the intended question before rerunning setup.');
+    var found=matches[0]||null;
+    if(found&&found.type!==spec.type)throw Error('The question for '+tag+' must use type '+spec.type+'. Its existing question has been kept.');
+    return {spec:spec,tag:tag,found:found};
+  });
+  plan.forEach(function(step){
+    if(step.found){
+      // Adopt legacy untagged questions (including the original Comments field)
+      // without resetting their title, required flag, choices, or help text.
+      if(step.found.help.toLowerCase().indexOf(step.tag)===-1)step.found.typed.setHelpText((step.found.help+' '+step.tag).trim());
+      return;
+    }
+    var spec=step.spec,item=form[addMethods[spec.type]]();
+    item.setTitle(spec.title).setHelpText(step.tag+(spec.help?' '+spec.help:'' )).setRequired(spec.required);
+    if(spec.choices)item.setChoiceValues(spec.choices);
+  });
 }
 function inspectForm() {
   var m=storeModel_();
