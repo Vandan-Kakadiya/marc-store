@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#2c2d68">
+  <meta name="description" content="The MARC polo collection for IIM Tiruchirappalli. Explore the collection and order when the drop opens.">
+  <title>MARC | The Polo Collection</title>
+  <link rel="icon" href="assets/marc-logo.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js" defer></script>
+  <script src="store-core.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="announcement">MARC <span> / </span> IIM TIRUCHIRAPPALLI <span class="announcement-end">THE POLO COLLECTION</span></div>
+  <header class="header">
+    <a href="#" class="brand" aria-label="MARC home"><img src="assets/marc-logo.png" alt="MARC logo" width="54" height="52"><span><strong>MARC</strong><small>MERCHANDISING &amp; RETAIL COMMITTEE</small></span></a>
+    <nav aria-label="Main navigation"><a href="#collection">The collection</a><button id="about-button">About the drop</button></nav>
+    <div class="header-actions"><button id="open-bag" class="bag-button" aria-label="Open shopping bag, 0 items"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 7h12l1 14H5L6 7Zm3 1V6a3 3 0 0 1 6 0v2"/></svg><span>Bag</span><b id="bag-count">0</b></button><span class="brand-divider"></span><img class="institute-logo" src="assets/iim-trichy-logo.png" alt="IIM Trichy logo" width="47" height="63"></div>
+  </header>
+  <main>
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy"><div class="eyebrow"><i></i> FROM CAMPUS. FOR CAMPUS.</div><h1 id="hero-title">A little pride.<br><em>Every day.</em></h1><p>The MARC polo collection.<br>Your institute. Your colours. Your way.</p><a class="button primary" href="#collection">Explore the polos <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></a><div class="collaboration"><span></span> In collaboration with <strong>UCB</strong></div></div>
+      <div class="hero-stage"><span class="stage-label">THE MARC POLO EDIT</span><div class="stage-circle"></div><div class="stage-line"></div><img class="hero-maroon" src="assets/polo-maroon.png" alt="Maroon IIM Trichy polo cutout" width="1068" height="1472"><img class="hero-white" src="assets/polo-white.png" alt="White IIM Trichy polo cutout" width="1098" height="1440"><div class="campus-seal"><span>IIM</span><strong>TRICHY</strong><small>CAMPUS COLOURS</small></div><span class="stage-caption">TWO COLOURS.<br>ONE CAMPUS SPIRIT.</span><span class="stage-index">MARC / 01</span></div>
+    </section>
+    <div class="notice wrap"><div class="notice-inner"><span class="notice-dot" id="connection-dot"></span><p id="connection-message">Collection preview. Prices, sizes and ordering will appear when orders open.</p><button id="refresh-catalogue" hidden>Refresh <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8a8 8 0 1 0 1 7M19 3v5h-5"/></svg></button></div></div>
+    <section class="collection wrap" id="collection" aria-labelledby="collection-title"><div class="section-heading"><div><div class="eyebrow muted">01 / THE POLO COLLECTION</div><h2 id="collection-title">Pick your campus colour.</h2></div><span class="section-note">The IIM Trichy crest.<br>The MARC spirit.</span></div><div class="collection-toolbar"><div class="filters" id="filters" role="group" aria-label="Filter by colour"></div><span id="product-count">2 colours</span></div><div class="product-grid" id="product-grid"></div><p class="catalogue-footnote" id="catalogue-footnote">Campaign designs shown. Final prices and sizes will be announced with the drop.</p></section>
+    <section class="brand-band wrap"><div class="band-logos"><img src="assets/marc-logo.png" alt="MARC" width="60" height="57"><span class="logo-cross" aria-hidden="true">|</span><img src="assets/iim-trichy-logo.png" alt="IIM Trichy" width="47" height="63"></div><p>A shared campus.<br><em>A colour of your own.</em></p><a href="#collection">Find your polo <svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg></a></section>
+  </main>
+  <footer class="footer wrap"><div><strong>MARC</strong><p>Merchandising &amp; Retail Committee<br>IIM Tiruchirappalli</p></div><div class="footer-right"><p>The Polo Collection</p><button id="footer-about">About the drop</button><small id="footer-status">Collection preview · Orders are not open</small></div><p class="designer-credit">Website designed by <strong>Vandan Kakadiya</strong></p></footer>
+  <dialog id="product-dialog" class="product-dialog" aria-labelledby="product-title"><button class="close-button" data-close="product-dialog" aria-label="Close product details">×</button><div id="product-detail"></div></dialog>
+  <dialog id="bag-dialog" class="bag-dialog" aria-labelledby="bag-title"><div class="drawer-header"><div><span class="eyebrow muted">YOUR CAMPUS COLOURS</span><h2 id="bag-title">Your bag <span id="drawer-count">0</span></h2></div><button class="close-button inline-close" data-close="bag-dialog" aria-label="Close shopping bag">×</button></div><div id="bag-content"></div></dialog>
+  <dialog id="about-dialog" class="about-dialog" aria-labelledby="about-title"><button class="close-button" data-close="about-dialog" aria-label="Close drop information">×</button><img src="assets/marc-logo.png" width="54" height="51" alt="MARC"><span class="eyebrow muted">THE POLO COLLECTION</span><h2 id="about-title">Your institute.<br>Your everyday.</h2><p>A polo collection by MARC, the Merchandising &amp; Retail Committee of IIM Tiruchirappalli, in collaboration with UCB.</p><p id="about-ordering">White and maroon campaign designs are on display. Prices, sizes, payment details and the order deadline will be shown once ordering opens.</p><button class="button primary full-width" data-close="about-dialog">Explore the collection <span aria-hidden="true">+</span></button></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
