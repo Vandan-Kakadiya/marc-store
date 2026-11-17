@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MARC | Checkout</title>
+  <style>
+    :root{--navy:#2c2d68;--orange:#f47f30;--muted:#827986;--line:#e7ddd9}*{box-sizing:border-box}body{margin:0;background:#fffaf6;color:#2b293a;font:14px Arial,Helvetica,sans-serif}header{background:var(--navy);color:#fff;padding:17px 6%;font-size:11px;letter-spacing:1.5px}main{max-width:970px;margin:42px auto;padding:0 24px 45px}.brand{display:flex;align-items:center;justify-content:space-between;margin-bottom:30px}.brand img{height:49px;max-width:60px;object-fit:contain}.brand>strong{font-size:26px;letter-spacing:-1px;color:var(--navy)}h1{color:var(--navy);font-size:36px;font-weight:500;letter-spacing:-1.4px;margin:0}h2{font-size:19px;font-weight:500;color:var(--navy)}p{font-size:12px;line-height:1.8;color:var(--muted)}.intro{margin:12px 0 26px}.layout{display:grid;grid-template-columns:1fr 1fr;gap:35px}.panel{border:1px solid var(--line);padding:25px;background:#fff;border-radius:4px}.summary{align-self:start}.line{display:flex;gap:12px;border-bottom:1px solid var(--line);padding:16px 0;align-items:center}.line img{width:56px;height:72px;object-fit:contain;background:#f8ede5;padding:3px}.line>div{flex:1}.line strong{font-size:12px;font-weight:500}.line small{display:block;font-size:10px;color:var(--muted);margin-top:6px}.price{font-size:12px}.total{display:flex;justify-content:space-between;font-size:17px;color:var(--navy);padding-top:22px}.description{white-space:pre-wrap;font-size:11px;line-height:1.8;background:#fff2e8;padding:17px;border:1px solid #f0dfd0;border-radius:3px;margin-top:23px;color:#8e6f56}.field,fieldset{display:block;margin:0 0 20px;padding:0;border:0;min-width:0}.field>span,legend{display:block;font-size:11px;margin-bottom:9px;color:var(--navy)}input:not([type=radio]):not([type=checkbox]),select,textarea{width:100%;border:1px solid #dcd0cd;background:#fffdfa;border-radius:3px;font:12px Arial;padding:11px;min-height:42px;color:#292638}textarea{min-height:90px;resize:vertical}.help{display:block;color:var(--muted);font-size:9px;line-height:1.6;margin-top:7px}.choice{display:flex;gap:8px;align-items:baseline;font-size:11px;line-height:1.6;margin:8px 0}.choice input{accent-color:var(--navy)}button,.button{border:0;display:block;text-align:center;text-decoration:none;cursor:pointer;background:var(--navy);color:#fff;padding:15px 20px;border-radius:3px;font:12px Arial;width:100%}button:disabled{opacity:.5;cursor:wait}input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid var(--orange);outline-offset:3px}.error{font-size:12px;line-height:1.7;background:#fff0e9;color:#a3442a;border:1px solid #edcaba;padding:14px;border-radius:3px;margin-bottom:20px}.loading{color:var(--muted);padding:45px 0}.success{max-width:520px;margin:55px auto}.success-mark{height:60px;width:60px;border-radius:50%;background:#f9dfc9;color:var(--navy);display:grid;place-items:center;font-size:30px;margin-bottom:25px}.success .button{margin-top:27px}.note{font-size:9px;line-height:1.7;text-align:center}.required{color:#c86225}.footer-note{text-align:center;font-size:9px;color:#a7979d;margin-top:30px}@media(max-width:700px){main{margin-top:27px;padding:0 18px 35px}.layout{grid-template-columns:1fr;gap:20px}.panel{padding:20px}h1{font-size:31px}.summary{order:-1}.brand{margin-bottom:24px}.brand img{height:42px}.description{margin-top:17px}}
+  .payment{border:1px solid #f0d6c0;background:#fff3e8;border-radius:4px;padding:18px;margin:5px 0 23px}.payment h2{margin:0 0 10px}.payment p{font-size:11px;line-height:1.7}.payment-qr{display:block;max-width:230px;max-height:260px;width:100%;object-fit:contain;margin:18px auto;background:white;border-radius:3px}.payment a{display:block;text-align:center;color:var(--navy);font-size:10px;text-underline-offset:3px}.payment .payee{color:var(--navy);font-size:12px;font-weight:600;text-align:center;overflow-wrap:anywhere}.proof-preview{display:block;max-height:220px;max-width:100%;object-fit:contain;margin:0 auto 22px}.proof-preview[hidden]{display:none}input[type=file]{font-size:10px!important;padding:9px!important}.upi-id{font-size:10px;text-align:center;overflow-wrap:anywhere}</style>
+</head>
+<body>
+<header>MARC / IIM TIRUCHIRAPPALLI</header>
+<main id="root"><div class="loading" role="status">Loading your bag and the latest collection…</div></main>
+<footer class="footer-note" style="margin-bottom:25px">Website designed by Vandan Kakadiya</footer>
+<script>
+'use strict';
+const root=document.getElementById('root');
+const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2}).format(n);
+let cart=[],model=null,orderLines=[],total=0,requestId='',busy=false,proofPreviewUrl='';
+if(window.crypto&&crypto.randomUUID)requestId=crypto.randomUUID();
+else {const bytes=new Uint8Array(24);crypto.getRandomValues(bytes);requestId=[...bytes].map(v=>v.toString(16).padStart(2,'0')).join('');}
+function safeImage(path){try{const u=new URL(path,model.storefront||'https://invalid.example/');return u.protocol==='https:'&&!u.hostname.endsWith('invalid.example')?u.href:'';}catch{return '';}}
+function fieldHtml(q){
+  const title=esc(q.title)+(q.required?' <span class="required">*</span>':''),help=q.help?'<small class="help">'+esc(q.help)+'</small>':'',required=q.required?' required':'',name='field_'+q.id;
+  if(q.type==='CHECKBOX'||q.type==='MULTIPLE_CHOICE')return '<fieldset data-field="'+q.id+'"><legend>'+title+'</legend>'+q.choices.map((c,i)=>'<label class="choice"><input type="'+(q.type==='CHECKBOX'?'checkbox':'radio')+'" name="'+name+'" value="'+esc(c)+'"'+(q.type==='MULTIPLE_CHOICE'?required:'')+'><span>'+esc(c)+'</span></label>').join('')+help+'</fieldset>';
+  let input='';
+  if(q.type==='LIST'||q.type==='SCALE'){
+    const options=q.type==='SCALE'?Array.from({length:q.upper-q.lower+1},(_,i)=>String(q.lower+i)):q.choices;
+    input='<select name="'+name+'"'+required+'><option value="">Choose an option</option>'+options.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('')+'</select>';
+  }else if(q.type==='PARAGRAPH_TEXT')input='<textarea name="'+name+'" maxlength="4000"'+required+'></textarea>';
+  else input='<input name="'+name+'" type="'+(q.role==='email'?'email':q.role==='phone'?'tel':'text')+'" autocomplete="'+(q.role==='email'?'email':q.role==='phone'?'tel':q.role==='name'?'name':'off')+'" '+(q.role==='transaction'?'inputmode="numeric" pattern="[0-9]{12}" maxlength="12" title="Enter the 12-digit UPI transaction ID / UTR"':'maxlength="250"')+required+'>';
+  return '<label class="field"><span>'+title+'</span>'+input+help+'</label>';
+}
+function showError(message){root.innerHTML='<section class="success"><h1>Let’s check your bag.</h1><p class="error">'+esc(message)+'</p><p>Return to the store to review the current collection.</p>'+(model&&model.storefront?'<a class="button" href="'+esc(model.storefront)+'">Back to the store</a>':'')+'</section>';}
+function paymentHtml(){
+  const p=model.payment;
+  return '<section class="payment"><h2>Scan &amp; pay '+money(total)+'</h2><p>Scan this QR code with your UPI app. Check the payee name, pay the exact total, then add your transaction reference and screenshot below.</p><img class="payment-qr" src="'+esc(p.qrUrl)+'" alt="MARC payment QR code"><p class="payee">'+esc(p.payeeName)+'</p>'+(p.upiId?'<p class="upi-id">UPI: '+esc(p.upiId)+'</p>':'')+'<a href="'+esc(p.qrUrl)+'" target="_blank" rel="noopener noreferrer">Open QR image</a></section>';
+}
+function previewProof(){
+  if(proofPreviewUrl)URL.revokeObjectURL(proofPreviewUrl);
+  const file=document.getElementById('payment-proof').files[0],preview=document.getElementById('proof-preview');
+  if(file&&['image/png','image/jpeg','image/webp'].includes(file.type)&&file.size<=model.payment.maxBytes){proofPreviewUrl=URL.createObjectURL(file);preview.src=proofPreviewUrl;preview.hidden=false;}else{preview.hidden=true;preview.removeAttribute('src');}
+}
+function loadCheckout(data){
+  if(!data||!data.ok){showError(data&&data.message||'Ordering is not ready yet.');return;}
+  model=data;
+  if(!model.catalogue.ready){showError('Orders are currently closed.');return;}
+  if(!Array.isArray(cart)||!cart.length){showError('Your bag is empty. Please choose a polo in the store first.');return;}
+  const skuMap=new Map();for(const p of model.catalogue.products)for(const s of p.skus)skuMap.set(s.sku,{product:p,sku:s});
+  const seen=new Set();let quantity=0;
+  for(const line of cart){if(!line||!skuMap.has(line.sku)||seen.has(line.sku)||!Number.isInteger(line.qty)||line.qty<1){showError('An item is no longer available. Please review your bag.');return;}seen.add(line.sku);quantity+=line.qty;orderLines.push({...skuMap.get(line.sku),qty:line.qty});}
+  if(quantity>model.catalogue.maxItems){showError('Your bag exceeds the current quantity limit.');return;}
+  total=orderLines.reduce((n,l)=>n+Math.round(l.sku.price*100)*l.qty,0)/100;
+  const marc=safeImage('assets/marc-logo.png'),iim=safeImage('assets/iim-trichy-logo.png');
+  root.innerHTML='<div class="brand">'+(marc?'<img src="'+esc(marc)+'" alt="MARC">':'<strong>MARC</strong>')+(iim?'<img src="'+esc(iim)+'" alt="IIM Trichy">':'')+'</div><h1>Your campus colours.</h1><p class="intro">Check the latest prices, complete your details and place your order.</p><div class="layout"><form id="order-form" class="panel"><div id="form-error" class="error" role="alert" hidden></div>'+model.fields.filter(q=>q.role!=='transaction').map(fieldHtml).join('')+paymentHtml()+model.fields.filter(q=>q.role==='transaction').map(fieldHtml).join('')+'<label class="field"><span>Payment screenshot <span class="required">*</span></span><input type="file" id="payment-proof" name="paymentProof" accept="image/png,image/jpeg,image/webp" required><small class="help">Upload a PNG, JPG or WebP image, up to 5 MB. Stored privately for MARC to verify your payment.</small></label><img id="proof-preview" class="proof-preview" alt="Selected payment screenshot" hidden><input type="hidden" id="order-payload" name="orderPayload">'+'<button id="submit-order" type="submit">Place order · '+money(total)+'</button><p class="note">Pay in your UPI app, then upload the payment screenshot. MARC verifies payment separately.</p></form><section class="panel summary"><h2>Your bag</h2>'+orderLines.map(l=>{const image=safeImage(l.product.image);return '<div class="line">'+(image?'<img src="'+esc(image)+'" alt="'+esc(l.product.colour+' polo')+'">':'')+'<div><strong>'+esc(l.product.name)+'</strong><small>'+esc(l.product.colour)+' / '+esc(l.sku.size)+' / Qty '+l.qty+'</small></div><span class="price">'+money(l.sku.price*l.qty)+'</span></div>';}).join('')+'<div class="total"><span>Total</span><strong>'+money(total)+'</strong></div><div class="description" id="drop-description"></div></section></div><p class="footer-note">MARC · IIM Tiruchirappalli</p>';
+  document.getElementById('drop-description').textContent=model.description;
+  document.getElementById('order-form').addEventListener('submit',submit);
+  document.getElementById('payment-proof').addEventListener('change',previewProof);
+}
+function submit(event){
+  event.preventDefault();if(busy)return;
+  const form=event.currentTarget,values=new FormData(form),fields={};
+  const proof=document.getElementById('payment-proof').files[0];
+  if(!proof||proof.size>model.payment.maxBytes||!['image/png','image/jpeg','image/webp'].includes(proof.type)){displayFailure('Choose a PNG, JPG or WebP payment screenshot up to 5 MB.');return;}
+  for(const q of model.fields){
+    const value=q.type==='CHECKBOX'?values.getAll('field_'+q.id):String(values.get('field_'+q.id)||'').trim();
+    if(q.required&&q.type==='CHECKBOX'&&!value.length){displayFailure('Please complete '+q.title+'.');return;}
+    fields[q.id]=value;
+  }
+  document.getElementById('order-payload').value=JSON.stringify({requestId:requestId,version:model.catalogue.version,items:cart,fields:fields});
+  busy=true;document.getElementById('submit-order').disabled=true;document.getElementById('submit-order').textContent='Saving your order…';document.getElementById('form-error').hidden=true;
+  google.script.run.withSuccessHandler(result=>{
+    busy=false;
+    if(!result||!result.ok){displayFailure(result&&result.message||'We could not confirm your order. Contact MARC before trying again.');return;}
+    const returnLink=model.storefront?new URL(model.storefront):null;if(returnLink)returnLink.hash='order-received';
+    if(proofPreviewUrl)URL.revokeObjectURL(proofPreviewUrl);
+    root.innerHTML='<section class="success"><div class="success-mark" aria-hidden="true">✓</div><h1>Order received.</h1><p>Your order and payment screenshot have been received by MARC.</p><div class="total"><span>'+Number(result.itemCount)+' item'+(result.itemCount===1?'':'s')+'</span><strong>'+money(Number(result.total))+'</strong></div><p>Keep your payment reference if payment is required. MARC will verify payment separately.</p>'+(returnLink?'<a class="button" href="'+esc(returnLink.href)+'">Back to the store</a>':'<p>You can close this tab.</p>')+'</section>';
+  }).withFailureHandler(()=>{busy=false;displayFailure('We could not confirm the result. Contact MARC before starting another order. If you retry, this checkout uses the same request reference to prevent duplicates.');}).submitOrderForm(form);
+}
+function displayFailure(message){const e=document.getElementById('form-error');e.textContent=message;e.hidden=false;e.tabIndex=-1;e.focus();const b=document.getElementById('submit-order');b.disabled=false;b.textContent='Place order · '+money(total);}
+google.script.url.getLocation(location=>{
+  try{const value=new URLSearchParams(String(location.hash||'').replace(/^#/,'' )).get('cart');cart=value?JSON.parse(value).items:[];}
+  catch{showError('The bag link could not be read. Please return to the store.');return;}
+  google.script.run.withSuccessHandler(loadCheckout).withFailureHandler(()=>showError('The store could not load. Please try again later.')).getCheckoutData();
+});
+</script>
+</body>
+</html>
