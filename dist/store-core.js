@@ -27,6 +27,12 @@
     u.searchParams.set('cart',JSON.stringify({items:items.map(line=>({sku:line.sku,qty:line.qty}))}));
     return u.href;
   }
+  function buildBuyNowUrl(target,sku) {
+    if(typeof sku!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(sku))throw Error('Choose a product option first.');
+    const u=new URL(buildCheckoutUrl(target,[{sku,qty:1}]));
+    u.searchParams.set('flow','buy-now');
+    return u.href;
+  }
   function validateCatalogue(data) {
     if (!data || data.apiVersion!==2 || !Array.isArray(data.products)) throw Error('Invalid catalogue.');
     if (!data.auth || data.auth.required!==true || data.auth.provider!=='google-account') throw Error('Google sign-in checkout is required.');
@@ -63,6 +69,6 @@
     return [{key:'all',label:'All products'},...options.values()];
   }
   function filterProducts(products,key) { return key==='all'?products:products.filter(p=>productFilterKey(p)===key); }
-  const api={imageUrl,appsScriptUrl,buildCheckoutUrl,validateCatalogue,reconcileBag,skuLookup,catalogueFilters,filterProducts};
+  const api={imageUrl,appsScriptUrl,buildCheckoutUrl,buildBuyNowUrl,validateCatalogue,reconcileBag,skuLookup,catalogueFilters,filterProducts};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.MarcStoreCore=api;
 })(typeof window==='undefined'?globalThis:window);
