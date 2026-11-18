@@ -5,8 +5,23 @@
     if (!value) return '';
     try { const u=new URL(value,base); return ['https:','http:'].includes(u.protocol)?u.href:''; } catch { return ''; }
   }
+  function appsScriptUrl(value) {
+    if(typeof value!=='string'||!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(value))return '';
+    return value;
+  }
+  function buildCheckoutUrl(target,items) {
+    if(!appsScriptUrl(target)||!Array.isArray(items)||!items.length)throw Error('Checkout is not configured.');
+    const u=new URL(target);
+    u.searchParams.set('page','checkout');
+    // Query parameters survive Google's sign-in redirect. Only SKU/quantity,
+    // never contact details, payment references or files, travel in this URL.
+    u.searchParams.set('cart',JSON.stringify({items:items.map(line=>({sku:line.sku,qty:line.qty}))}));
+    return u.href;
+  }
   function validateCatalogue(data) {
-    if (!data || data.apiVersion!==1 || !Array.isArray(data.products)) throw Error('Invalid catalogue.');
+    if (!data || data.apiVersion!==2 || !Array.isArray(data.products)) throw Error('Invalid catalogue.');
+    if (!data.auth || data.auth.required!==true || data.auth.provider!=='google-account') throw Error('Google sign-in checkout is required.');
+    if (data.ready===true&&!appsScriptUrl(data.checkoutUrl)) throw Error('Invalid checkout URL.');
     const seen=new Set();
     for (const p of data.products) {
       if (!p || !/^[a-zA-Z0-9_-]{1,80}$/.test(p.id) || typeof p.name!=='string' || typeof p.colour!=='string' || !Array.isArray(p.skus)) throw Error('Invalid product.');
@@ -32,6 +47,13 @@
     for(const product of products){const variant=product.skus.find(s=>s.sku===sku);if(variant)return {product,variant};}
     return null;
   }
-  const api={imageUrl,validateCatalogue,reconcileBag,skuLookup};
+  function productFilterKey(product) { return 'product:'+product.name.trim().toLowerCase(); }
+  function catalogueFilters(products) {
+    const options=new Map();
+    for(const product of products){const key=productFilterKey(product);if(!options.has(key))options.set(key,{key,label:product.name.trim()});}
+    return [{key:'all',label:'All products'},...options.values()];
+  }
+  function filterProducts(products,key) { return key==='all'?products:products.filter(p=>productFilterKey(p)===key); }
+  const api={imageUrl,appsScriptUrl,buildCheckoutUrl,validateCatalogue,reconcileBag,skuLookup,catalogueFilters,filterProducts};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.MarcStoreCore=api;
 })(typeof window==='undefined'?globalThis:window);
