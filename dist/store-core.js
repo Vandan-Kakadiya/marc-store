@@ -3,7 +3,16 @@
   'use strict';
   function imageUrl(value, base) {
     if (!value) return '';
-    try { const u=new URL(value,base); return ['https:','http:'].includes(u.protocol)?u.href:''; } catch { return ''; }
+    try {
+      const u=new URL(value,base);
+      if(!['https:','http:'].includes(u.protocol))return '';
+      // Keep existing Form image paths working while serving smaller copies of
+      // these two supplied assets. Other merchandise URLs are unchanged.
+      for(const name of ['polo-white','polo-maroon']){
+        if(u.href===new URL('assets/'+name+'.png',base).href)return new URL('assets/'+name+'.webp?v=speed1',base).href;
+      }
+      return u.href;
+    } catch { return ''; }
   }
   function appsScriptUrl(value) {
     if(typeof value!=='string'||!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(value))return '';

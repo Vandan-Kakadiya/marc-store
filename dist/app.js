@@ -5,12 +5,12 @@ const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>
 const money=n=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2}).format(n);
 const arrow='<svg class="arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19 19 5M5 5h14v14"/></svg>';
 const previews=[{id:'preview-white',name:'MARC Polo',colour:'White',image:'assets/polo-white.png',skus:[]},{id:'preview-maroon',name:'MARC Polo',colour:'Maroon',image:'assets/polo-maroon.png',skus:[]}];
-let products=previews,ready=false,maxItems=1,currentFilter='all',bag=[],activeProduct=null,activeSku=null,refreshPromise=null,toastTimer,savedBag=[],checkoutTarget='';
+let products=previews,ready=false,maxItems=1,currentFilter='all',bag=[],activeProduct=null,activeSku=null,refreshPromise=null,toastTimer,savedBag=[],checkoutTarget='',lastRefreshAt=0;
 try{savedBag=JSON.parse(localStorage.getItem('marc-polo-bag-v2')||'[]');}catch{}
 if(location.hash==='#order-received'){savedBag=[];try{localStorage.removeItem('marc-polo-bag-v2');}catch{}history.replaceState(null,'',location.pathname+location.search);}
 function photo(p,className=''){
   const src=C.imageUrl(p.image,document.baseURI);
-  return src?`<img class="${className}" src="${esc(src)}" alt="${esc(p.colour+' '+p.name)}" loading="lazy">`:`<div class="photo-placeholder ${className}"><img src="assets/marc-logo.png" alt="MARC"><span>Product photo coming soon</span></div>`;
+  return src?`<img class="${className}" src="${esc(src)}" alt="${esc(p.colour+' '+p.name)}" loading="lazy" decoding="async">`:`<div class="photo-placeholder ${className}"><img src="assets/marc-logo.png" alt="MARC"><span>Product photo coming soon</span></div>`;
 }
 document.addEventListener('error',e=>{const image=e.target;if(image.tagName==='IMG'&&image.closest('.product-image,.detail-art,.bag-thumb'))image.replaceWith(Object.assign(document.createElement('span'),{className:'image-unavailable',textContent:'Product photo coming soon'}));},true);
 function count(){return bag.reduce((n,i)=>n+i.qty,0);}
@@ -40,17 +40,18 @@ function renderBag(){
   updateCounts();
   $('bag-content').innerHTML=bag.length?`<div class="bag-items">${bag.map((line,i)=>{const {product:p,variant:s}=C.skuLookup(products,line.sku);return `<div class="bag-item"><div class="bag-thumb">${photo(p)}</div><div class="bag-info"><div class="bag-item-top"><h3>${esc(p.name)}</h3><button data-remove="${i}" class="remove-item" aria-label="Remove ${esc(p.colour+' '+p.name)}">×</button></div><p>${esc(p.colour)} / ${esc(s.size)}</p><div class="bag-item-bottom"><div class="quantity-control"><button data-quantity="${i}" data-delta="-1" aria-label="Decrease ${esc(p.colour)} quantity">−</button><span>${line.qty}</span><button data-quantity="${i}" data-delta="1" aria-label="Increase ${esc(p.colour)} quantity" ${count()>=maxItems?'disabled':''}>+</button></div><span>${money(s.price*line.qty)}</span></div></div></div>`;}).join('')}</div><div class="bag-summary"><div class="subtotal"><span>Subtotal</span><strong>${money(subtotal())}</strong></div><p>Google sign-in is required to continue to checkout. If already signed in, you can continue directly.</p>${ready?`<a class="button primary full-width google-checkout" href="${esc(checkoutUrl())}">Continue with Google ${arrow}</a>`:'<button class="button primary full-width" disabled>Ordering paused</button>'}<small>Prices and availability are checked again at checkout.</small></div>`:`<div class="empty-bag"><span aria-hidden="true">+</span><h3>Your campus essentials<br>are waiting.</h3><p>${ready?'Find your favourites in the collection.':'Your bag will be ready when ordering opens.'}</p><button class="button primary" data-close="bag-dialog">Explore the store ${arrow}</button></div>`;
 }
-function jsonp(url){return new Promise((resolve,reject)=>{
+function jsonp(url,forceRefresh=false){return new Promise((resolve,reject)=>{
   const callback='marcCatalog_'+Date.now()+'_'+Math.random().toString(36).slice(2),script=document.createElement('script');let timer;
   const cleanup=()=>{clearTimeout(timer);script.remove();delete window[callback];};window[callback]=data=>{cleanup();resolve(data);};
   script.onerror=()=>{cleanup();reject(Error('Connection failed.'));};timer=setTimeout(()=>{cleanup();reject(Error('Connection timed out.'));},18000);
-  const u=new URL(url);u.searchParams.set('action','catalog');u.searchParams.set('callback',callback);u.searchParams.set('_',Date.now());script.src=u.href;document.head.appendChild(script);
+  const u=new URL(url);u.searchParams.set('action','catalog');u.searchParams.set('callback',callback);u.searchParams.set('_',Date.now());if(forceRefresh)u.searchParams.set('fresh','1');script.src=u.href;document.head.appendChild(script);
 });}
-async function refreshCatalogue(){
+async function refreshCatalogue(forceRefresh=false){
   if(!config.appsScriptUrl)return;if(refreshPromise)return refreshPromise;
+  if(forceRefresh!==true&&Date.now()-lastRefreshAt<5000)return;lastRefreshAt=Date.now();
   refreshPromise=(async()=>{try{
     const u=new URL(config.appsScriptUrl);if(u.protocol!=='https:'||u.hostname!=='script.google.com'||!/^\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(u.pathname))throw Error('Invalid Apps Script URL.');
-    const data=C.validateCatalogue(await jsonp(u.href)),previous=JSON.stringify(bag);products=data.products;checkoutTarget=C.appsScriptUrl(data.checkoutUrl);ready=data.ready===true&&Boolean(checkoutTarget)&&products.length>0;maxItems=data.maxItems;
+    const data=C.validateCatalogue(await jsonp(u.href,forceRefresh===true)),previous=JSON.stringify(bag);products=data.products;checkoutTarget=C.appsScriptUrl(data.checkoutUrl);ready=data.ready===true&&Boolean(checkoutTarget)&&products.length>0;maxItems=data.maxItems;
     bag=C.reconcileBag(savedBag,products,maxItems);saveBag();
     $('connection-message').textContent=ready?'Ordering is open. Browse the latest campus merchandise.':'Orders are not open yet. Browse the collection while we get ready.';
     $('connection-dot').classList.toggle('live',ready);$('catalogue-footnote').textContent=ready?'Choose a product and option to build your bag.':'Final ordering details will appear when orders open.';
@@ -70,7 +71,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)r
   if(b.id==='open-bag'){renderBag();openDialog('bag-dialog');return;}
   if(b.dataset.remove!==undefined){bag.splice(Number(b.dataset.remove),1);saveBag();renderBag();$('bag-dialog').querySelector('.remove-item,.empty-bag button')?.focus();return;}
   if(b.dataset.quantity!==undefined){const i=Number(b.dataset.quantity),delta=Number(b.dataset.delta);if(delta>0&&count()>=maxItems)return;bag[i].qty+=delta;if(bag[i].qty<=0)bag.splice(i,1);saveBag();renderBag();$('bag-dialog').querySelector('.quantity-control button:not(:disabled),.empty-bag button')?.focus();return;}
-  if(b.id==='about-button'||b.id==='footer-about'){openDialog('about-dialog');return;}if(b.id==='refresh-catalogue')refreshCatalogue();
+  if(b.id==='about-button'||b.id==='footer-about'){openDialog('about-dialog');return;}if(b.id==='refresh-catalogue')refreshCatalogue(true);
 });
 renderCollection();updateCounts();
-if(config.appsScriptUrl){$('refresh-catalogue').hidden=false;refreshCatalogue();setInterval(()=>{if(!document.hidden)refreshCatalogue();},Math.max(15000,Number(config.refreshIntervalMs)||60000));window.addEventListener('focus',refreshCatalogue);}
+if(config.appsScriptUrl){$('refresh-catalogue').hidden=false;refreshCatalogue();setInterval(()=>{if(!document.hidden)refreshCatalogue();},Math.max(15000,Number(config.refreshIntervalMs)||60000));window.addEventListener('focus',()=>refreshCatalogue());document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshCatalogue();});}
