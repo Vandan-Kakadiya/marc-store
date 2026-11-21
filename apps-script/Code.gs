@@ -15,6 +15,10 @@ var HEADINGS = [
   'Private screenshot',
   'Submission fingerprint'
 ];
+var ORDER_NUMBER_HEADER = 'MARC Order Number';
+var SNAPSHOT_HEADER = 'MARC Receipt Snapshot';
+var ORDER_ID_PATTERN =
+  /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 var FORMATS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 var PROOF_LIMIT = 4 * 1024 * 1024;
 
@@ -85,6 +89,8 @@ function doPost(event) {
   try {
     if (request.action === 'placeOrder')
       return output_(saveOrder_(props, request.data));
+    if (request.action === 'listOrders')
+      return output_(listOrders_(props, request.data));
     if (request.action === 'catalogue')
       return output_({ ok: true, data: catalogue_(props) });
     return output_({ ok: false, code: 'unknown_action' });
@@ -111,14 +117,35 @@ function private_(driveItem) {
       'Set General access to Restricted on the Sheet and the screenshot folder.'
     );
 }
+function orderBook_(p) {
+  if (!p.RESPONSE_SHEET_ID) setupError_('Set RESPONSE_SHEET_ID.');
+  private_(DriveApp.getFileById(p.RESPONSE_SHEET_ID));
+  return SpreadsheetApp.openById(p.RESPONSE_SHEET_ID);
+}
+function orderColumns_(tab) {
+  var lastColumn = Math.max(HEADINGS.length, tab.getLastColumn());
+  var headers = tab.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+  if (headers.slice(0, HEADINGS.length).join('|') !== HEADINGS.join('|'))
+    setupError_('Restore the original headers in ' + ORDER_TAB + '.');
+  var changed = false;
+  var columns = [ORDER_NUMBER_HEADER, SNAPSHOT_HEADER].map(function (heading) {
+    var existing = headers.indexOf(heading, HEADINGS.length) + 1;
+    if (existing) return existing;
+    var column = ++lastColumn;
+    if (column > tab.getMaxColumns())
+      tab.insertColumnsAfter(tab.getMaxColumns(), column - tab.getMaxColumns());
+    tab.getRange(1, column).setValues([[heading]]).setFontWeight('bold');
+    changed = true;
+    return column;
+  });
+  if (changed) SpreadsheetApp.flush();
+  return { number: columns[0], snapshot: columns[1] };
+}
 function openStorage_(p) {
-  if (!p.RESPONSE_SHEET_ID || !p.SCREENSHOT_FOLDER_ID)
-    setupError_('Set RESPONSE_SHEET_ID and SCREENSHOT_FOLDER_ID.');
-  var folder = DriveApp.getFolderById(p.SCREENSHOT_FOLDER_ID),
-    file = DriveApp.getFileById(p.RESPONSE_SHEET_ID);
+  if (!p.SCREENSHOT_FOLDER_ID) setupError_('Set SCREENSHOT_FOLDER_ID.');
+  var folder = DriveApp.getFolderById(p.SCREENSHOT_FOLDER_ID);
   private_(folder);
-  private_(file);
-  var book = SpreadsheetApp.openById(p.RESPONSE_SHEET_ID);
+  var book = orderBook_(p);
   var tab = book.getSheetByName(ORDER_TAB) || book.insertSheet(ORDER_TAB);
   if (!tab.getLastRow()) {
     tab
@@ -128,12 +155,12 @@ function openStorage_(p) {
     tab.setFrozenRows(1);
     SpreadsheetApp.flush();
   }
-  if (
-    tab.getRange(1, 1, 1, HEADINGS.length).getDisplayValues()[0].join('|') !==
-    HEADINGS.join('|')
-  )
-    setupError_('Restore the original headers in ' + ORDER_TAB + '.');
-  return { book: book, tab: tab, folder: folder, legacy: legacy_(book, p) };
+  return {
+    tab: tab,
+    folder: folder,
+    legacy: legacy_(book, p),
+    columns: orderColumns_(tab)
+  };
 }
 function legacy_(book, p) {
   if (!p.LEGACY_TAB) return null;
@@ -198,9 +225,7 @@ function orderRow_(o, fingerprint, date, link) {
 function proof_(o) {
   if (
     !o ||
-    !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
-      o.id || ''
-    ) ||
+    !ORDER_ID_PATTERN.test(o.id || '') ||
     !/^\d{12}$/.test(o.utr || '') ||
     !o.contact ||
     !o.buyer ||
@@ -239,9 +264,17 @@ function proof_(o) {
   };
 }
 function driveCopy_(folder, o, evidence) {
+  var extension = '.' + FORMATS[evidence.mime];
+  var name = String(o.contact.name || '')
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 80);
   var filename =
-    'MARC-' + o.id + '-' + evidence.hash + '.' + FORMATS[evidence.mime];
+    [orderGroup_(o.contact.affiliation, o.contact.roll), name || 'Buyer', o.id]
+      .join('_') + extension;
   var existing = folder.getFilesByName(filename);
+  if (!existing.hasNext())
+    existing = folder.getFilesByName('MARC-' + o.id + '-' + evidence.hash + extension);
   var alreadySaved = existing.hasNext();
   var file = alreadySaved
     ? existing.next()
@@ -256,10 +289,103 @@ function driveCopy_(folder, o, evidence) {
     throw Error('Screenshot could not be confirmed.');
   return file.getUrl();
 }
-function savedReceipt_(id, row) {
+function orderGroup_(affiliation, roll) {
+  if (/^[0-9]{6}$/.test(String(roll))) return String(roll);
+  return affiliation === 'Staff' ? 'STAFF' : 'OTHER';
+}
+function buyerKey_(buyer) {
+  return digest_('MARC Google account\n' + buyer);
+}
+function orderSnapshot_(key, lines) {
+  var snapshot = JSON.stringify({ key: key, lines: lines });
+  return snapshot.length <= 48000
+    ? snapshot
+    : JSON.stringify({ key: key, lines: [] });
+}
+function orderRows_(tab, columns) {
+  var count = tab.getLastRow() - 1;
+  return count > 0
+    ? tab.getRange(2, 1, count, Math.max(columns.number, columns.snapshot)).getValues()
+    : [];
+}
+function savedOrder_(row) {
+  return ORDER_ID_PATTERN.test(row[0]) && row[1] && row[11];
+}
+function nextOrderNumber_(tab, columns, contact) {
+  var group = orderGroup_(contact.affiliation, contact.roll);
+  var prefix = 'MARC_' + group + '_';
+  var count = 0, highest = 0;
+  orderRows_(tab, columns).forEach(function (row) {
+    if (!savedOrder_(row)) return;
+    if (orderGroup_(row[6], row[7]) === group) count++;
+    var number = row[columns.number - 1];
+    if (typeof number === 'string' && number.indexOf(prefix) === 0) {
+      var sequence = Number(number.slice(prefix.length));
+      if (Number.isSafeInteger(sequence)) highest = Math.max(highest, sequence);
+    }
+  });
+  return prefix + (Math.max(count, highest) + 1);
+}
+function listOrders_(p, identity) {
+  if (!identity || typeof identity.buyer !== 'string' || !identity.buyer)
+    return { ok: false, code: 'invalid_buyer' };
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(4000)) return { ok: false, code: 'busy' };
+  try {
+    var tab = orderBook_(p).getSheetByName(ORDER_TAB);
+    if (!tab || tab.getLastRow() < 2) return { ok: true, data: [] };
+    var columns = orderColumns_(tab);
+    var key = buyerKey_(identity.buyer);
+    var email = String(identity.email || '').trim().toLowerCase();
+    var proven = new Set(Array.isArray(identity.orderIds) ? identity.orderIds : []);
+    var orders = [], migrated = false;
+    orderRows_(tab, columns).forEach(function (row, index) {
+      if (!savedOrder_(row)) return;
+      var when = row[1] instanceof Date ? row[1].getTime() : Date.parse(row[1]);
+      var total = Math.round(Number(row[9]) * 100);
+      if (!Number.isFinite(when) || !Number.isSafeInteger(total) || total < 1)
+        return;
+      var snapshot = row[columns.snapshot - 1];
+      var lines = [];
+      if (snapshot) {
+        var saved;
+        try {
+          saved = JSON.parse(snapshot);
+        } catch (invalidSnapshot) {
+          return;
+        }
+        if (!saved || saved.key !== key) return;
+        if (Array.isArray(saved.lines)) lines = saved.lines;
+      } else {
+        var matchingEmail = email && String(row[4]).trim().toLowerCase() === email;
+        if (!proven.has(row[0]) && !matchingEmail)
+          return;
+        tab.getRange(index + 2, columns.snapshot).setValues([[orderSnapshot_(key, [])]]);
+        migrated = true;
+      }
+      orders.push({
+        id: row[0],
+        number: String(row[columns.number - 1] || row[0]),
+        submittedAt: new Date(when).toISOString(),
+        paymentStatus: String(row[2] || 'Under review'),
+        total: total,
+        lines: lines,
+        items: lines.length ? '' : String(row[8] || '')
+      });
+    });
+    if (migrated) SpreadsheetApp.flush();
+    orders.sort(function (a, b) {
+      return b.submittedAt.localeCompare(a.submittedAt) || a.id.localeCompare(b.id);
+    });
+    return { ok: true, data: orders };
+  } finally {
+    lock.releaseLock();
+  }
+}
+function savedReceipt_(id, row, number) {
   return {
     ok: true,
-    data: { id: id, submittedAt: row[1], status: 'under_review' }
+    data: { id: id, number: number || id, submittedAt: row[1], status: 'under_review' }
   };
 }
 function saveOrder_(p, o) {
@@ -269,6 +395,7 @@ function saveOrder_(p, o) {
   try {
     var storage = openStorage_(p),
       tab = storage.tab,
+      columns = storage.columns,
       row = locate_(tab, 1, o.id);
     if (row) {
       var previous = tab
@@ -276,7 +403,10 @@ function saveOrder_(p, o) {
         .getDisplayValues()[0];
       if (previous[12] !== evidence.fingerprint)
         return { ok: false, code: 'retry_different' };
-      if (previous[1] && previous[11]) return savedReceipt_(o.id, previous);
+      if (previous[1] && previous[11]) {
+        var previousNumber = tab.getRange(row, columns.number).getDisplayValues()[0][0];
+        return savedReceipt_(o.id, previous, previousNumber);
+      }
     } else {
       if (
         locate_(tab, 11, o.utr) ||
@@ -297,18 +427,26 @@ function saveOrder_(p, o) {
     row = locate_(tab, 1, o.id);
     if (!row) throw Error('Order row is unavailable.');
     var when = new Date().toISOString();
+    var number = nextOrderNumber_(tab, columns, o.contact);
+    var snapshot = orderSnapshot_(buyerKey_(o.buyer), o.lines);
+    tab.getRange(row, columns.number).setValues([[number]]);
+    tab.getRange(row, columns.snapshot).setValues([[snapshot]]);
     var cells = tab.getRange(row, 1, 1, HEADINGS.length);
     cells.setValues([orderRow_(o, evidence.fingerprint, when, link)]);
     SpreadsheetApp.flush();
-    var saved = cells.getDisplayValues()[0];
+    var saved = tab
+      .getRange(row, 1, 1, Math.max(columns.number, columns.snapshot))
+      .getDisplayValues()[0];
     if (
       saved[0] !== o.id ||
       saved[1] !== when ||
       saved[11] !== link ||
-      saved[12] !== evidence.fingerprint
+      saved[12] !== evidence.fingerprint ||
+      saved[columns.number - 1] !== number ||
+      saved[columns.snapshot - 1] !== snapshot
     )
       throw Error('The order row could not be confirmed.');
-    return savedReceipt_(o.id, saved);
+    return savedReceipt_(o.id, saved, number);
   } finally {
     lock.releaseLock();
   }

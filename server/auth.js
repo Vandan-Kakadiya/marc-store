@@ -12,7 +12,8 @@ import {
 
 const stateCookie = '__Host-marc-vercel-login';
 const sessionCookie = '__Host-marc-vercel-user';
-const sessionSeconds = 7 * 86400;
+const sessionPurpose = 'buyer session v2';
+const sessionSeconds = 20 * 60;
 const callbackPath = '/api/auth/callback';
 function getCookie(req, name) {
   const prefix = name + '=';
@@ -53,7 +54,7 @@ export function loginReady(env) {
 export function getUser(req, env) {
   return unseal(
     getCookie(req, sessionCookie),
-    'buyer session',
+    sessionPurpose,
     env.MARC_SESSION_KEY || '',
     3600
   );
@@ -179,7 +180,7 @@ export function createAuth({ env, fetcher = fetch }) {
           }
         );
         if (!profile.ok) fail(401, 'Google could not confirm your account.');
-        const { sub, email, email_verified, name } = await profile.json();
+        const { sub, email, email_verified, name, hd } = await profile.json();
         if (
           typeof sub !== 'string' ||
           !sub ||
@@ -194,10 +195,12 @@ export function createAuth({ env, fetcher = fetch }) {
           {
             sub,
             email,
+            googleEmail:
+              /@gmail\.com$/i.test(email) || (typeof hd === 'string' && !!hd),
             name: typeof name === 'string' ? name.slice(0, 120) : '',
             expires: Date.now() + sessionSeconds * 1000
           },
-          'buyer session',
+          sessionPurpose,
           env.MARC_SESSION_KEY
         );
         return redirect(token.back, [

@@ -17,7 +17,8 @@
   color: white;
   box-shadow: none;
 }
-.order-progress[open] {
+.order-progress[open],
+.store-progress:not([hidden]) {
   display: grid;
   place-items: center;
 }
@@ -65,8 +66,31 @@
   margin: 8px 0 0;
   color: #e8e8f1;
 }
+.store-progress {
+  z-index: 20;
+}
+.store-progress .order-progress-ring {
+  position: relative;
+  background: none;
+}
+.store-progress .order-progress-ring::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: conic-gradient(var(--apricot) 30%, #ffffff33 30%);
+  animation: store-loading-spin 900ms linear infinite;
+}
+@keyframes store-loading-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .order-progress-ring {
     transition: none;
+  }
+  .store-progress .order-progress-ring::before {
+    animation: none;
   }
 }

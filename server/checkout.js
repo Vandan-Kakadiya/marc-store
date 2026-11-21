@@ -28,6 +28,7 @@ const groups = [
 const quotePurpose = 'order quote';
 const receiptPurpose = 'order receipt';
 const quoteMax = 210000;
+const orderNumberPattern = /^MARC_(?:[0-9]{6}|STAFF|OTHER)_[1-9][0-9]*$/;
 const proofTypes = ['image/png', 'image/jpeg', 'image/webp'];
 function storageReady(env) {
   return !!(
@@ -37,16 +38,15 @@ function storageReady(env) {
 }
 function contactInfo(data, buyer) {
   const name = requiredText(data?.name, 120, 'your full name');
-  const phone = requiredText(data?.phone, 24, 'your phone number').replace(
-    /[\s()-]/g,
-    ''
-  );
-  if (!/^\+?[0-9]{8,15}$/.test(phone)) fail(400, 'Enter a valid phone number.');
+  const phone = data?.phone;
+  if (typeof phone !== 'string' || !/^[0-9]{10}$/.test(phone))
+    fail(400, 'Enter a mobile number with exactly 10 digits.');
   if (!groups.includes(data.affiliation))
     fail(400, 'Choose your programme or affiliation.');
-  const roll = groups.slice(0, 4).includes(data.affiliation)
-    ? requiredText(data.roll, 40, 'your roll number')
-    : '';
+  const student = groups.slice(0, 4).includes(data.affiliation);
+  const roll = student ? data.roll : '';
+  if (student && (typeof roll !== 'string' || !/^[0-9]{6}$/.test(roll)))
+    fail(400, 'Enter a roll number with exactly 6 digits.');
   return {
     name,
     email: buyer.email,
@@ -226,6 +226,7 @@ async function submit(req, env, buyer, fetcher) {
     );
   const receipt = {
     id: quote.id,
+    number: orderNumberPattern.test(saved.number || '') ? saved.number : quote.id,
     total: quote.total,
     lines: quote.lines,
     submittedAt: saved.submittedAt,
@@ -241,6 +242,42 @@ async function submit(req, env, buyer, fetcher) {
   });
 }
 
+function ownReceipts(tokens, env, buyer) {
+  if (!Array.isArray(tokens) || tokens.length > 15)
+    fail(400, 'Could not read the saved receipts.');
+  const visible = [];
+  for (const token of tokens) {
+    const receipt =
+      typeof token === 'string' &&
+      unseal(token, receiptPurpose, env.MARC_SESSION_KEY, quoteMax);
+    if (receipt && receipt.buyer === buyer.sub) {
+      const { id, number, total, lines, submittedAt, status } = receipt;
+      visible.push({ id, number: number || id, total, lines, submittedAt, status });
+    }
+  }
+  return visible;
+}
+
+async function orderHistory(body, env, buyer, fetcher) {
+  if (!storageReady(env)) fail(503, 'MARC is setting up order storage.');
+  const orderIds = ownReceipts(body.tokens ?? [], env, buyer).map((r) => r.id);
+  let result;
+  try {
+    result = await callScript(
+      env,
+      'listOrders',
+      { buyer: buyer.sub, email: buyer.googleEmail ? buyer.email : '', orderIds },
+      fetcher,
+      10000
+    );
+  } catch {
+    fail(503, 'Your orders could not be loaded. Try again.');
+  }
+  if (!result.ok || !Array.isArray(result.data))
+    fail(503, 'Your orders could not be loaded. Try again.');
+  return json(result.data);
+}
+
 export function createCheckout({ env, fetcher = fetch }) {
   return async (req) => {
     try {
@@ -253,6 +290,7 @@ export function createCheckout({ env, fetcher = fetch }) {
         const buyer = getUser(req, env);
         return json({
           user: buyer ? { name: buyer.name, email: buyer.email } : null,
+          sessionRemainingMs: buyer ? Math.max(0, buyer.expires - Date.now()) : 0,
           loginReady: loginReady(env),
           storageReady: storageReady(env)
         });
@@ -265,7 +303,7 @@ export function createCheckout({ env, fetcher = fetch }) {
       if (!buyer) fail(401, 'Sign in with Google to continue.');
       if (action === 'place') return await submit(req, env, buyer, fetcher);
       const maxJSON =
-        action === 'receipts'
+        action === 'receipts' || action === 'history'
           ? 2600000
           : action === 'resume'
             ? quoteMax + 128
@@ -303,21 +341,10 @@ export function createCheckout({ env, fetcher = fetch }) {
         }
         case 'resume':
           return json(quoteView(openQuote(body.quote, env, buyer)));
-        case 'receipts': {
-          if (!Array.isArray(body.tokens) || body.tokens.length > 15)
-            fail(400, 'Could not read the saved receipts.');
-          const visible = [];
-          for (const token of body.tokens) {
-            const receipt =
-              typeof token === 'string' &&
-              unseal(token, receiptPurpose, env.MARC_SESSION_KEY, quoteMax);
-            if (receipt && receipt.buyer === buyer.sub) {
-              const { id, total, lines, submittedAt, status } = receipt;
-              visible.push({ id, total, lines, submittedAt, status });
-            }
-          }
-          return json(visible);
-        }
+        case 'receipts':
+          return json(ownReceipts(body.tokens, env, buyer));
+        case 'history':
+          return await orderHistory(body, env, buyer, fetcher);
         default:
           fail(404, 'Unknown checkout request.');
       }

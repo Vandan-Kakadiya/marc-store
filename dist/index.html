@@ -18,10 +18,40 @@
       crossorigin
     />
     <link rel="modulepreload" href="market-core.js?v=5" />
-    <link rel="stylesheet" href="market.css?v=5" />
-    <script type="module" src="market.js?v=5"></script>
+    <link rel="stylesheet" href="market.css?v=7" />
+    <link rel="stylesheet" href="order-progress.css?v=2" />
+    <script type="module" src="market.js?v=6"></script>
   </head>
   <body>
+    <div
+      id="store-loading"
+      class="order-progress store-progress"
+      role="status"
+      hidden
+    >
+      <div class="order-progress-content">
+        <div class="order-progress-ring" aria-hidden="true">
+          <div class="order-progress-center">
+            <img
+              src="assets/marc-mark-small.png"
+              width="120"
+              height="113"
+              alt=""
+            />
+          </div>
+        </div>
+        <h2>Loading the MARC Store</h2>
+      </div>
+    </div>
+    <script>
+      {
+        const loader = document.getElementById('store-loading');
+        loader.hidden = false;
+        setTimeout(() => {
+          loader.hidden = true;
+        }, 2500);
+      }
+    </script>
     <a class="skip" href="#shop">Skip to merchandise</a>
     <header class="mast">
       <div class="wrap head-row">
@@ -129,23 +159,27 @@
         >
         <div>
           <div class="credit">
-            Website Managed by <strong>MARC</strong>
-          </div>
-          <div class="credit">
-            <span>Developed by <strong>Vandan Kakadiya</strong></span>
+            <span>Website Managed by <strong>MARC</strong></span>
             <a
-              href="https://www.linkedin.com/in/vandankakadiya/"
-              aria-label="Vandan Kakadiya on LinkedIn"
+              class="credit-instagram"
+              href="https://www.instagram.com/marc_iimtrichy?gwpx=MXV2aGJ1OGZrZDBsdw=="
               target="_blank"
               rel="noopener noreferrer"
+              aria-label="MARC on Instagram"
             >
-              <img
-                src="assets/linkedin-icon-small.png"
-                alt=""
-                width="18"
-                height="18"
-              />
+              <img src="assets/instagram-glyph.svg" width="18" height="18" alt="" />
             </a>
+          </div>
+          <div class="credit">
+            <span>
+              Developed by
+              <strong><a
+                href="https://www.linkedin.com/in/vandankakadiya/"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Vandan Kakadiya on LinkedIn"
+              >Vandan Kakadiya</a></strong>
+            </span>
           </div>
         </div>
       </div>

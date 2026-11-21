@@ -4,6 +4,16 @@ This update uses the latest navy-and-orange MARC design. Use your existing proje
 
 When the customer clicks **Place order**, a Vercel function sends the order to Apps Script. Apps Script saves the screenshot in your restricted Google Drive folder, records the order in **MARC Website Orders** inside the Form’s linked spreadsheet, and returns the order reference and submission timestamp. The customer sees **Order received** after both saves are confirmed. A separate background catalogue check picks up your edits to the existing Form.
 
+## Update a live MARC store
+
+1. From **MARC-Checkout-Update.zip**, copy `apps-script/Code.gs` into your existing **MARC Vercel Checkout** Apps Script project and save. Select **Deploy → Manage deployments → Edit → New version → Deploy** on the current web app.
+2. At the top level of **marc-store** on GitHub, upload the contents of the extracted ZIP with their folders. Commit to `main` and wait for **Ready** in Vercel.
+3. Check **My orders** on two devices using the same Google account. The update requires a fresh sign-in and signs customers out 20 minutes after sign-in.
+
+New student order numbers use the roll number and sequence, such as `MARC_260431_1`. Staff and Other orders use their group in place of the roll number. The sequence includes completed earlier orders with the same roll number. Earlier orders display their original reference. New screenshot filenames start with the roll number and customer name, followed by a unique order ID.
+
+Earlier orders saved with a Gmail or Google Workspace email can be linked through that email. For an older order placed with another email provider, open **My orders** while signed in on the original browser to link its saved receipt.
+
 ## 1. Extract the repository and generate the keys
 
 1. Download **MARC-Vercel-Checkout.zip**. In File Explorer, right-click it and choose **Extract All**.
@@ -123,11 +133,11 @@ The storefront loads the latest published catalogue from Vercel. The customer ca
 1. Open your store in a private browser tab. Choose a size and **Add to bag**. Open the same product and click **Buy now**. The summary should show one selected item and keep the item in the earlier bag.
 2. Click **Continue with Google**. After the Google account step, confirm the browser returns to the MARC address. Check the customer’s verified email, phone and affiliation. Each PGPM cohort requires a roll number. **Staff** and **Other** hide it.
 3. Click **Continue to payment**. Confirm the amount and scan the QR to check the recipient reads **IIMT MART**. To test the screen without a payment, stop here or cancel the unpaid checkout.
-4. For the first authorized order, enter the real **12-digit UPI transaction ID**, attach a PNG, JPG or WebP screenshot up to **4 MB**, and click **Place order**. While Google saves it the website says **Saving your order and screenshot**. Once the save is confirmed, the same page shows **Order received**, a reference and the submission time in IST.
+4. For the first authorized order, enter the real **12-digit UPI transaction ID**, attach a PNG, JPG or WebP screenshot up to **4 MB**, and click **Place order**. The MARC progress screen reaches 100% once the save is confirmed. The same page then shows **Order received**, the order number and the submission time in IST.
 5. In the existing linked spreadsheet, open **MARC Website Orders**. Find the same reference. Check the timestamp (stored in UTC), contact and item details, UTR, **Under review** status and the **Private screenshot** link. Open the link using a MARC account with access to the folder. Compare the actual UPI credit to the amount and reference, then record the verified status in the Sheet.
 6. Once previous checkouts are reconciled, switch the MARC buying links to the updated checkout on Vercel. Preserve the old spreadsheet tab for historical orders. The Form’s own Responses tab counts direct Google Form submissions. The website writes its orders to **MARC Website Orders** in that same spreadsheet.
 
-If the upload is interrupted, stay in the same checkout tab and retry **Place order** with the same UTR and screenshot. The same order reference can recover a completed save. Keep a copy of that order reference after submitting. **My orders** displays the saved receipts for the signed-in account on the browser used to place them.
+If the upload is interrupted, stay in the same checkout tab and retry **Place order** with the same UTR and screenshot. The same order can recover a completed save. **My orders** reads the saved orders for the Google account from the linked spreadsheet on any device. Sign in again when the 20-minute MARC session expires.
 
 ## Troubleshooting
 

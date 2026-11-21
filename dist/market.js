@@ -352,5 +352,10 @@ window.addEventListener('pageshow', (e) => {
 setInterval(() => {
   if (!document.hidden) refresh();
 }, 60000);
+const startupLoader = $('store-loading');
+function hideStartupLoader() {
+  if (startupLoader) startupLoader.hidden = true;
+}
 repaint();
-refresh();
+if (catalog.skus.length || !configured) hideStartupLoader();
+refresh().finally(hideStartupLoader);

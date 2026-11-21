@@ -16,7 +16,7 @@ import {
   save
 } from './market-core.js?v=5';
 
-const receiptKey = 'marc-vercel-receipts-v1';
+const legacyReceiptKey = 'marc-vercel-receipts-v1';
 const path = new URL(location.href);
 const fields = $('contact-form').elements,
   proof = $('proof-form').elements;
@@ -34,6 +34,7 @@ let draft = read(sessionStorage, DRAFT, null),
 let ordersMode =
   path.searchParams.get('orders') === '1' || !draft?.items?.length;
 let loadCount = 0;
+let sessionTimer, sessionEndsAt;
 
 function show(zone) {
   for (const id of zones) $(id).hidden = id !== zone;
@@ -41,6 +42,36 @@ function show(zone) {
 function message(text = '', retry = false) {
   $('checkout-status').textContent = text;
   $('retry-checkout').hidden = !retry;
+}
+function showSignIn() {
+  show('login');
+  $('login').querySelector('h2').textContent = ordersMode
+    ? 'Sign in to view your orders'
+    : 'Sign in to checkout';
+}
+function expireSession(
+  text = 'Your 20-minute session ended. Sign in with Google to continue.'
+) {
+  ++loadCount;
+  clearTimeout(sessionTimer);
+  user = null;
+  order = null;
+  sessionEndsAt = 0;
+  orderProgress.close();
+  $('continue-payment').disabled = true;
+  $('google').disabled = false;
+  $('contact-form').reset();
+  $('proof-form').reset();
+  $('past-orders').replaceChildren();
+  $('order-number').textContent = '';
+  $('order-time').textContent = '';
+  $('order-time').removeAttribute('datetime');
+  summary([]);
+  showSignIn();
+  message(text);
+}
+function checkSessionExpiry() {
+  if (user && sessionEndsAt && Date.now() >= sessionEndsAt) expireSession();
 }
 function setOrderProgress(percent) {
   const ring = $('order-progress-ring');
@@ -133,46 +164,39 @@ function openPayment(record) {
     ? 'Retry with the same UTR and screenshot. Pay only once.'
     : 'After paying, enter the transaction ID and attach your screenshot.';
 }
-function recordReceipt(data) {
-  const stored = read(localStorage, receiptKey, []);
-  const existing = Array.isArray(stored) ? stored : [];
-  return save(
-    localStorage,
-    receiptKey,
-    [
-      { id: data.id, token: data.token },
-      ...existing.filter((x) => x?.id !== data.id)
-    ].slice(0, 12)
-  );
-}
 function openReceipt(entry) {
   show('receipt');
   summary(entry.lines, true);
+  if (!entry.lines.length && entry.items) {
+    const rows = entry.items
+      .split('\n')
+      .map((item) => node('p', 'line-meta', item));
+    $('summary-lines').replaceChildren(...rows);
+  }
   $('summary-total').textContent = money(entry.total);
-  $('receipt-status').textContent =
-    'Your order and screenshot were saved. MARC will verify the UPI payment.';
-  $('order-number').textContent = entry.id;
+  $('receipt-status').textContent = entry.paymentStatus
+    ? 'Payment status · ' + entry.paymentStatus
+    : 'Your order and screenshot were saved. MARC will verify the UPI payment.';
+  $('order-number').textContent = entry.number || entry.id;
+  $('back-to-orders').hidden = !ordersMode;
   $('order-time').dateTime = entry.submittedAt;
   $('order-time').textContent =
     indiaTime.format(new Date(entry.submittedAt)) + ' IST';
   $('receipt').querySelector('h2').focus({ preventScroll: true });
 }
-async function myOrders() {
+async function myOrders(turn) {
   show('orders');
   summary([]);
   const out = $('past-orders'),
-    history = read(localStorage, receiptKey, []);
-  out.textContent = 'Loading your receipts…';
-  const entries = Array.isArray(history) ? history : [];
-  const receipts = entries.length
-    ? await post('receipts', {
-        tokens: entries
-          .slice(0, 12)
-          .map((e) => e?.token)
-          .filter(Boolean)
-      })
-    : [];
+    history = read(localStorage, legacyReceiptKey, []);
   out.replaceChildren();
+  message('Loading your orders…');
+  const entries = Array.isArray(history) ? history : [];
+  const tokens = entries.slice(0, 12).map((e) => e?.token).filter(Boolean);
+  if (draft?.receipt) tokens.push(draft.receipt);
+  const receipts = await post('history', { tokens });
+  if (turn !== loadCount) return;
+  message();
   if (draft?.quote && !draft.receipt)
     out.append(
       btn('Resume checkout', 'action navy', () =>
@@ -184,7 +208,7 @@ async function myOrders() {
       node(
         'p',
         'card-meta',
-        'No saved receipts for this account on this browser.'
+        'No orders found for this Google account.'
       )
     );
   for (const entry of receipts) {
@@ -197,7 +221,8 @@ async function myOrders() {
           ' · ' +
           indiaTime.format(new Date(entry.submittedAt))
       ),
-      node('p', '', entry.id),
+      node('p', '', entry.number),
+      node('p', 'line-meta', entry.paymentStatus),
       btn('View receipt', 'text-btn', () => openReceipt(entry))
     );
     out.append(row);
@@ -205,6 +230,7 @@ async function myOrders() {
 }
 async function boot() {
   const turn = ++loadCount;
+  const requestedAt = Date.now();
   $('google').disabled = true;
   $('continue-payment').disabled = true;
   message();
@@ -224,22 +250,29 @@ async function boot() {
           )
     ]);
     if (turn !== loadCount) return;
+    clearTimeout(sessionTimer);
     user = info.user;
     $('google').disabled = !info.loginReady;
     if (!user) {
-      show('login');
-      if (ordersMode)
-        $('login').querySelector('h2').textContent =
-          'Sign in to view your orders';
+      sessionEndsAt = 0;
+      showSignIn();
       if (!info.loginReady) message('MARC is setting up Google sign-in.');
       return;
     }
+    sessionEndsAt = requestedAt + info.sessionRemainingMs;
+    const timeLeft = sessionEndsAt - Date.now();
+    if (!Number.isFinite(timeLeft) || timeLeft <= 0) {
+      expireSession();
+      return;
+    }
+    sessionTimer = setTimeout(expireSession, timeLeft);
     if (ordersMode) {
-      await myOrders();
+      await myOrders(turn);
       return;
     }
     if (draft.receipt) {
       const [entry] = await post('receipts', { tokens: [draft.receipt] });
+      if (turn !== loadCount) return;
       if (entry) openReceipt(entry);
       else {
         show('orders');
@@ -274,12 +307,19 @@ async function boot() {
         'An option is unavailable. Return to the shop to update the bag.'
       );
   } catch (e) {
+    if (turn !== loadCount) return;
+    if (e.status === 401) {
+      expireSession();
+      return;
+    }
     message(e.message, true);
   }
 }
 for (const role of affiliations) fields.affiliation.add(new Option(role, role));
 fields.affiliation.onchange = updateRoll;
 $('retry-checkout').onclick = boot;
+window.addEventListener('pageshow', checkSessionExpiry);
+document.addEventListener('visibilitychange', checkSessionExpiry);
 orderProgress.addEventListener('cancel', (event) => event.preventDefault());
 $('google').onclick = () =>
   location.assign('/api/auth/start' + (ordersMode ? '?orders=1' : ''));
@@ -296,7 +336,8 @@ for (const id of ['switch-account', 'switch-order-account']) {
 }
 $('contact-form').onsubmit = async (e) => {
   e.preventDefault();
-  if (!draft || $('continue-payment').disabled) return;
+  if (!user || !draft || $('continue-payment').disabled) return;
+  const turn = loadCount;
   $('continue-payment').disabled = true;
   message('Confirming the total…');
   try {
@@ -311,6 +352,7 @@ $('contact-form').onsubmit = async (e) => {
         roll: fields.roll.value
       }
     });
+    if (turn !== loadCount) return;
     const pending = { ...draft, quote: data.token };
     if (!save(sessionStorage, DRAFT, pending))
       throw Error('Allow browser storage before continuing to payment.');
@@ -318,19 +360,21 @@ $('contact-form').onsubmit = async (e) => {
     message();
     openPayment(data);
   } catch (e) {
+    if (turn !== loadCount) return;
     if (e.status === 401) {
-      await boot();
+      expireSession();
       return;
     }
     if (e.status === 409) {
       try {
         catalogue = await liveCatalogue();
+        if (turn !== loadCount) return;
         summary(draft.items);
       } catch {}
     }
     message(e.message, true);
   } finally {
-    if (user)
+    if (turn === loadCount && user)
       $('continue-payment').disabled =
         !catalogue.open ||
         !draft.items.every((item) =>
@@ -349,7 +393,8 @@ $('cancel-unpaid').onclick = () => {
 };
 $('proof-form').onsubmit = async (e) => {
   e.preventDefault();
-  if (!order || !draft?.quote || $('submit-proof').disabled) return;
+  if (!user || !order || !draft?.quote || $('submit-proof').disabled) return;
+  const turn = loadCount;
   const image = proof.proof.files[0];
   if (
     !image ||
@@ -382,33 +427,37 @@ $('proof-form').onsubmit = async (e) => {
       body: payload,
       signal: AbortSignal.timeout(65000)
     });
-    if (saved.id !== order.id || !saved.token)
+    if (saved.id !== pending.id || !saved.token)
       throw Error('The order save could not be confirmed.');
-    const stored = recordReceipt(saved);
-    const completed = { ...draft, receipt: saved.token };
+    const completed = { ...pending, receipt: saved.token };
     const savedDraft = save(sessionStorage, DRAFT, completed);
     draft = completed;
     clearInterval(progressTimer);
-    setOrderProgress(100);
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    orderProgress.close();
-    openReceipt(saved);
+    if (turn === loadCount) {
+      setOrderProgress(100);
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      if (turn === loadCount) {
+        orderProgress.close();
+        openReceipt(saved);
+      }
+    }
     proof.proof.value = '';
     try {
       await finishBag(completed);
     } catch {
-      message('Your order was saved. Your browser could not update the bag.');
+      if (turn === loadCount)
+        message('Your order was saved. Your browser could not update the bag.');
     }
-    if (!stored || !savedDraft)
+    if (turn === loadCount && !savedDraft)
       message('Your order was saved. Keep a copy of your order reference.');
   } catch (e) {
+    if (turn !== loadCount) return;
     if (e.status === 401) {
-      show('login');
-      message(
+      expireSession(
         'Sign in with the same Google account, then retry using the same UTR and screenshot.'
       );
     } else {
-      message(e.message + ' Order reference ' + order.id);
+      message(e.message + ' Order reference ' + pending.id);
     }
   } finally {
     clearInterval(progressTimer);
