@@ -645,24 +645,13 @@ dialog::backdrop {
   margin-top: 8px;
 }
 .sizes button,
-.control button,
-.product-quantity select {
+.control button {
   padding: 7px 12px;
   min-height: 40px;
   border: 1px solid var(--rule);
   border-radius: 3px;
   background: #fff;
   font-size: 14px;
-}
-.product-quantity {
-  display: grid;
-  gap: 8px;
-}
-.product-quantity select {
-  min-width: 4.5rem;
-  min-height: 44px;
-  color: var(--ink);
-  font-size: 16px;
 }
 .sizes [aria-pressed='true'] {
   background: var(--navy);
@@ -730,6 +719,20 @@ dialog::backdrop {
 }
 .control span {
   font-size: 13px;
+}
+.product-quantity .control {
+  margin-top: 8px;
+}
+.product-quantity .control button {
+  min-width: 44px;
+  min-height: 44px;
+  font-size: 20px;
+}
+.product-quantity .control span {
+  min-width: 1.5rem;
+  text-align: center;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 .total {
   margin: 16px 0;

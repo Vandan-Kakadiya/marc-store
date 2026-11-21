@@ -190,16 +190,22 @@ function renderProduct(rows) {
   }
   const sizeOptions = node('div');
   sizeOptions.append(node('p', 'option-label', 'Size / option'), sizes);
-  const quantityLabel = node('label', 'product-quantity');
-  const quantity = node('select');
-  for (let amount = 1; amount <= catalog.limit; amount++) {
-    quantity.add(new Option(String(amount), String(amount)));
-  }
+  const quantityOptions = node('div', 'product-quantity');
+  const quantityControl = node('div', 'control');
+  quantityControl.setAttribute('role', 'group');
+  quantityControl.setAttribute('aria-label', 'Quantity');
+  const quantity = node('span');
+  quantity.setAttribute('aria-live', 'polite');
+  quantity.setAttribute('aria-atomic', 'true');
+  const decrease = btn('−', '', () => changeQuantity(-1));
+  decrease.setAttribute('aria-label', 'Decrease quantity');
+  const increase = btn('+', '', () => changeQuantity(1));
+  increase.setAttribute('aria-label', 'Increase quantity');
   selectedQuantity = Math.min(selectedQuantity, catalog.limit);
-  quantity.value = String(selectedQuantity);
-  quantityLabel.append(node('span', 'option-label', 'Quantity'), quantity);
+  quantityControl.append(decrease, quantity, increase);
+  quantityOptions.append(node('p', 'option-label', 'Quantity'), quantityControl);
   const options = node('div', 'product-options');
-  options.append(sizeOptions, quantityLabel);
+  options.append(sizeOptions, quantityOptions);
 
   const orderNote = node('small');
   orderNote.setAttribute('aria-live', 'polite');
@@ -209,7 +215,8 @@ function renderProduct(rows) {
     const qty = selectedQuantity;
     add.disabled = true;
     buy.disabled = true;
-    quantity.disabled = true;
+    decrease.disabled = true;
+    increase.disabled = true;
     let errorMessage = '';
     const added = await updateBag(
       (items) => {
@@ -241,7 +248,9 @@ function renderProduct(rows) {
     const ordering = allowsOrder();
     const remaining = Math.max(0, catalog.limit - count());
     const fitsInBag = selectedQuantity <= remaining;
-    quantity.disabled = !ordering;
+    quantity.textContent = selectedQuantity;
+    decrease.disabled = !ordering || selectedQuantity <= 1;
+    increase.disabled = !ordering || selectedQuantity >= catalog.limit;
     add.disabled = !picked || !ordering || !fitsInBag;
     buy.disabled = !picked || !ordering;
 
@@ -256,10 +265,10 @@ function renderProduct(rows) {
       orderNote.textContent = 'Maximum ' + catalog.limit + units + ' per order.';
     }
   }
-  quantity.addEventListener('change', () => {
-    selectedQuantity = Number(quantity.value);
+  function changeQuantity(delta) {
+    selectedQuantity += delta;
     updatePurchaseOptions();
-  });
+  }
   updatePurchaseOptions();
   actions.append(add, buy);
   info.append(options, actions, orderNote);
