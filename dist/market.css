@@ -522,6 +522,33 @@ footer {
 .foot > span:first-child {
   font-weight: 700;
 }
+.store-footer {
+  display: grid;
+  grid-template-columns: clamp(70px, 6vw, 96px) minmax(0, 1fr);
+}
+.store-footer .foot {
+  width: 100%;
+  padding-inline: 12px clamp(16px, 4vw, 64px);
+}
+.footer-logo {
+  display: grid;
+  align-items: center;
+  background: var(--paper);
+}
+.footer-logo img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.footer-links {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  font-weight: 700;
+}
+.footer-links a {
+  font-size: .8125rem;
+}
 .foot i {
   color: var(--apricot);
   padding: 0 4px;
