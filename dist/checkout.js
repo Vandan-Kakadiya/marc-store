@@ -51,8 +51,6 @@ function showSignIn() {
   $('login').querySelector('h2').textContent = ordersMode
     ? 'Sign in to view your orders'
     : 'Sign in to checkout';
-  if (ordersMode)
-    $('login-intro').textContent = 'Use the Google account you used to place your orders.';
 }
 function resetGoogleSignIn() {
   if (googleRetryTimer === undefined) return;
@@ -173,6 +171,19 @@ function openContact() {
   if (!fields.name.value) fields.name.value = user.name || '';
   updateRoll();
 }
+function updateReferenceField() {
+  const bank = proof.paidWith.value === $('bank-payment-method').value;
+  $('reference-label').textContent = bank
+    ? 'Bank transfer UTR'
+    : 'UPI transaction ID (UTR)';
+  proof.utr.inputMode = bank ? 'text' : 'numeric';
+  proof.utr.minLength = bank ? 6 : 12;
+  proof.utr.maxLength = bank ? 40 : 12;
+  proof.utr.pattern = bank ? '[A-Za-z0-9]{6,40}' : '[0-9]{12}';
+  proof.utr.placeholder = bank
+    ? 'Reference from your bank receipt'
+    : '12-digit reference';
+}
 function openPayment(record) {
   order = record;
   show('payment');
@@ -189,10 +200,26 @@ function openPayment(record) {
     );
   qr.src = record.payment.qr;
   $('qr-link').href = record.payment.qr;
+
+  const bank = record.payment.bank;
+  const bankDetails = $('bank-details');
+  bankDetails.hidden = !bank;
+  if (!bank) bankDetails.open = false;
+  $('bank-name').textContent = bank ? record.payment.payee : '';
+  $('bank-account-number').textContent = bank?.accountNumber ?? '';
+  $('bank-ifsc').textContent = bank?.ifsc ?? '';
+  const bankOption = $('bank-payment-method');
+  bankOption.hidden = !bank;
+  bankOption.disabled = !bank;
+  proof.paidWith.value = draft.paidWith || '';
+  proof.paidWith.disabled = !!draft.sent;
+  $('paid-with-label').hidden = Boolean(draft.sent && !draft.paidWith);
+  updateReferenceField();
+
   $('cancel-unpaid').hidden = !!draft.sent;
   $('proof-tip').textContent = draft.sent
     ? 'Retry with the same UTR and screenshot. Pay only once.'
-    : 'After paying, enter the transaction ID and attach your screenshot.';
+    : 'After paying, select your payment method, enter the reference and attach your screenshot.';
 }
 function openReceipt(entry) {
   show('receipt');
@@ -206,7 +233,7 @@ function openReceipt(entry) {
   $('summary-total').textContent = money(entry.total);
   $('receipt-status').textContent = entry.paymentStatus
     ? 'Payment status · ' + entry.paymentStatus
-    : 'Your order and screenshot were saved. MARC will verify the UPI payment.';
+    : 'Your order and screenshot were saved. MARC will verify your payment.';
   $('order-number').textContent = entry.number || entry.id;
   $('back-to-orders').hidden = !ordersMode;
   $('order-time').dateTime = entry.submittedAt;
@@ -347,6 +374,7 @@ async function boot() {
 }
 for (const role of affiliations) fields.affiliation.add(new Option(role, role));
 fields.affiliation.onchange = updateRoll;
+proof.paidWith.onchange = updateReferenceField;
 $('retry-checkout').onclick = boot;
 window.addEventListener('pageshow', checkSessionExpiry);
 window.addEventListener('pagehide', resetGoogleSignIn);
@@ -375,6 +403,7 @@ $('contact-form').onsubmit = async (e) => {
     const data = await post('quote', {
       id: draft.id,
       version: catalogue.version,
+      paidWithSelection: true,
       items: draft.items,
       contact: {
         name: fields.name.value,
@@ -436,10 +465,12 @@ $('proof-form').onsubmit = async (e) => {
     return;
   }
   const payload = new FormData();
+  const paidWith = draft.paidWith || proof.paidWith.value;
   payload.set('quote', draft.quote);
   payload.set('utr', proof.utr.value.trim());
   payload.set('proof', image, image.name);
-  const pending = { ...draft, sent: true };
+  if (paidWith) payload.set('paidWith', paidWith);
+  const pending = { ...draft, sent: true, ...(paidWith ? { paidWith } : {}) };
   if (!save(sessionStorage, DRAFT, pending)) {
     message(
       'Allow browser storage so you can recover this order if the connection drops.'
@@ -447,6 +478,7 @@ $('proof-form').onsubmit = async (e) => {
     return;
   }
   draft = pending;
+  proof.paidWith.disabled = true;
   $('cancel-unpaid').hidden = true;
   $('submit-proof').disabled = true;
   message();

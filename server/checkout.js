@@ -30,6 +30,8 @@ const receiptPurpose = 'order receipt';
 const quoteMax = 210000;
 const orderNumberPattern = /^MARC_(?:[0-9]{6,7}|STAFF|OTHER)_[1-9][0-9]*$/;
 const proofTypes = ['image/png', 'image/jpeg', 'image/webp'];
+const bankTransfer = 'Bank transfer (NEFT / IMPS / RTGS)';
+const paymentMethods = ['GPay', 'PhonePe', 'Paytm', 'CRED', bankTransfer, 'Others'];
 function storageReady(env) {
   return !!(
     scriptEndpoint(env.MARC_SCRIPT_URL) &&
@@ -109,6 +111,16 @@ async function getCatalogue(origin, fetcher) {
   if (!response.ok) fail(503, 'The catalogue is temporarily unavailable.');
   return validateCatalogue(await response.json());
 }
+function paymentForQuote(payment, env) {
+  const accountNumber = (env.MARC_BANK_ACCOUNT_NUMBER || '').trim();
+  const ifsc = (env.MARC_BANK_IFSC || '').trim().toUpperCase();
+  if (
+    !/^[0-9]{6,34}$/.test(accountNumber) ||
+    !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)
+  )
+    return payment;
+  return { ...payment, bank: { accountNumber, ifsc } };
+}
 function quoteView(quote) {
   return {
     id: quote.id,
@@ -156,9 +168,22 @@ async function submit(req, env, buyer, fetcher) {
   }
   const quote = openQuote(form.get('quote'), env, buyer),
     proof = form.get('proof'),
-    utr = form.get('utr');
-  if (typeof utr !== 'string' || !/^\d{12}$/.test(utr))
+    paidWith = form.get('paidWith') ?? '',
+    reference = form.get('utr');
+  if (
+    (quote.requiresPaidWith || paidWith !== '') &&
+    !paymentMethods.includes(paidWith)
+  )
+    fail(400, 'Choose how you paid for this order.');
+  const utr = typeof reference === 'string' ? reference.trim().toUpperCase() : '';
+  if (paidWith === bankTransfer) {
+    if (!quote.payment.bank)
+      fail(400, 'Bank transfer is unavailable for this checkout.');
+    if (!/^[A-Z0-9]{6,40}$/.test(utr))
+      fail(400, 'Enter the UTR from your bank receipt using letters and digits.');
+  } else if (!/^[0-9]{12}$/.test(utr)) {
     fail(400, 'Enter the 12-digit UPI transaction ID.');
+  }
   if (
     !proof ||
     typeof proof === 'string' ||
@@ -179,6 +204,7 @@ async function submit(req, env, buyer, fetcher) {
     total: quote.total,
     payee: quote.payment.payee,
     utr,
+    ...(paidWith ? { paidWith } : {}),
     proof: { mime: proof.type, base64: bytes.toString('base64') }
   };
   let result;
@@ -197,7 +223,7 @@ async function submit(req, env, buyer, fetcher) {
         'This transaction ID is already recorded. Check it or contact MARC.'
       );
     if (result.code === 'retry_different')
-      fail(409, 'Use the same UTR and screenshot from your first submission.');
+      fail(409, 'Use the same payment method, UTR and screenshot from your first submission.');
     if (result.code === 'busy')
       fail(
         503,
@@ -331,7 +357,8 @@ export function createCheckout({ env, fetcher = fetch }) {
             lines,
             total: lines.reduce((n, r) => n + r.qty * r.paise, 0),
             terms: catalogue.terms,
-            payment: catalogue.payment,
+            payment: paymentForQuote(catalogue.payment, env),
+            requiresPaidWith: body.paidWithSelection === true,
             expires: Date.now() + 7 * 86400000
           };
           return json({

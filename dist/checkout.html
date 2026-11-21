@@ -13,9 +13,9 @@
     </script>
     <link rel="icon" href="assets/marc-logo.png" />
     <link rel="modulepreload" href="market-core.js?v=6" />
-    <link rel="stylesheet" href="market.css?v=8" />
+    <link rel="stylesheet" href="market.css?v=21" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=10"></script>
+    <script type="module" src="checkout.js?v=11"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -43,9 +43,7 @@
         <div class="checkout-panel">
           <section id="login">
             <h2>Sign in to checkout</h2>
-            <p id="login-intro">
-              Use your Google account to save your order and payment receipt.
-            </p>
+            <p>Use only your IIM Trichy email ID to sign in.</p>
             <button class="action navy" id="google" disabled>
               Continue with Google <span aria-hidden="true">→</span>
             </button>
@@ -125,12 +123,48 @@
                 >
               </div>
             </div>
+            <p class="qr-help">
+              Paying on this phone? Save or screenshot the QR and open it from your UPI app’s gallery.
+              For Google Pay payments over ₹2,000, scan the QR from another device.
+            </p>
+            <details class="bank-details" id="bank-details" hidden>
+              <summary>Pay by bank transfer</summary>
+              <dl>
+                <dt>Name</dt>
+                <dd id="bank-name"></dd>
+                <dt>Account number</dt>
+                <dd id="bank-account-number"></dd>
+                <dt>IFSC</dt>
+                <dd id="bank-ifsc"></dd>
+              </dl>
+              <p>
+                Transfer the exact order amount shown above. After paying, choose
+                <strong>Bank transfer (NEFT / IMPS / RTGS)</strong> and enter the
+                UTR from your bank receipt.
+              </p>
+            </details>
+            <h3>After paying</h3>
             <p id="proof-tip">
               Already paid? Submit your screenshot below. Pay only once.
             </p>
             <form id="proof-form">
-              <label
-                >UPI transaction ID (UTR)<input
+              <label id="paid-with-label">
+                Paid with
+                <select name="paidWith" required>
+                  <option value="">Select payment method</option>
+                  <option>GPay</option>
+                  <option>PhonePe</option>
+                  <option>Paytm</option>
+                  <option>CRED</option>
+                  <option id="bank-payment-method" hidden disabled>
+                    Bank transfer (NEFT / IMPS / RTGS)
+                  </option>
+                  <option>Others</option>
+                </select>
+              </label>
+              <label>
+                <span id="reference-label">UPI transaction ID (UTR)</span>
+                <input
                   name="utr"
                   inputmode="numeric"
                   minlength="12"
