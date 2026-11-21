@@ -221,6 +221,11 @@ function saveCatalogue(data) {
           /^assets\/optimized\/[a-f0-9]{20}-(480|960)\.webp$/.test(variant.src)
         )
       : [];
+    const extraImages = Array.isArray(p.extraImages)
+      ? [...new Set(p.extraImages.filter(
+          (src) => typeof src === 'string' && src !== p.image && photo({ image: src })
+        ))].slice(0, 2)
+      : [];
     return p.skus.map((s) => ({
       sku: s.sku,
       name: p.name,
@@ -228,7 +233,8 @@ function saveCatalogue(data) {
       size: s.size,
       paise: s.paise,
       image: p.image,
-      imageVariants
+      imageVariants,
+      extraImages
     }));
   });
   const catalog = {

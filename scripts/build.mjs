@@ -3,6 +3,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import { siteURL } from '../server/common.js';
 import { callScript } from '../server/script-client.js';
 import { validateCatalogue } from '../server/catalogue.js';
+import { saveDriveProductPhotos } from './drive-product-photos.mjs';
 
 const output = new URL('../dist/', import.meta.url);
 const manifest = JSON.parse(
@@ -37,6 +38,12 @@ if (!result.ok)
     'Could not synchronize catalogue. Check the Apps Script deployment and property setup.'
   );
 const snapshot = validateCatalogue(result.data);
+await saveDriveProductPhotos(
+  result.data.photoAssets ?? [],
+  snapshot.products,
+  output,
+  (photo) => callScript(process.env, 'productPhoto', photo)
+);
 snapshot.products = await Promise.all(snapshot.products.map(addImageVariants));
 const json = JSON.stringify(snapshot);
 const index = new URL('index.html', output);

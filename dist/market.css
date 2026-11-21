@@ -650,6 +650,50 @@ dialog::backdrop {
   object-fit: contain;
   filter: drop-shadow(6px 12px 10px rgb(55 39 26 / 19%));
 }
+.product-gallery {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.gallery-track {
+  display: flex;
+  flex: 1;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.gallery-track .detail-photo {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.gallery-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--navy);
+}
+.gallery-controls button {
+  min-height: 44px;
+  padding: 5px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: #fff;
+  color: inherit;
+}
+.gallery-counter {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .gallery-track {
+    scroll-behavior: smooth;
+  }
+}
 .detail-info {
   padding: 50px 28px 28px;
 }

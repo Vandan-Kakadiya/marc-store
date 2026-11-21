@@ -14,7 +14,7 @@ import {
   publishedCatalogue,
   read,
   save
-} from './market-core.js?v=6';
+} from './market-core.js?v=7';
 const published = publishedCatalogue();
 let catalog = published || cachedCatalogue(),
   bag = getBag(),
@@ -25,7 +25,7 @@ let catalog = published || cachedCatalogue(),
   selectedQuantity = 1,
   activeGroup = '',
   refreshTime = published ? Date.now() : 0;
-let toastTimer;
+let toastTimer, activePhoto;
 const groups = () =>
   Object.values(
     catalog.skus.reduce((all, row) => {
@@ -158,8 +158,64 @@ function openProduct(rows) {
   activeGroup = groupKey(rows);
   selected = rows.length === 1 ? rows[0].sku : '';
   selectedQuantity = 1;
+  activePhoto = null;
   renderProduct(rows);
   $('product').showModal();
+}
+function createGallery(photos) {
+  const gallery = node('div', 'product-gallery');
+  gallery.setAttribute('role', 'group');
+  gallery.setAttribute('aria-label', 'Product photos');
+  const track = node('div', 'gallery-track');
+  track.tabIndex = 0;
+  track.setAttribute('role', 'group');
+  track.setAttribute('aria-label', 'Swipe or use arrow keys to view photos');
+  track.append(...photos.map((row) => picture(row, 'detail-photo')));
+
+  const controls = node('div', 'gallery-controls');
+  const counter = node('span', 'gallery-counter', '1 / ' + photos.length);
+  counter.setAttribute('aria-live', 'polite');
+  counter.setAttribute('aria-atomic', 'true');
+  const current = () => Math.round(track.scrollLeft / (track.clientWidth || 1));
+  const move = (delta) => {
+    const next = (current() + delta + photos.length) % photos.length;
+    track.scrollTo({ left: next * track.clientWidth });
+  };
+  controls.append(
+    btn('Previous', '', () => move(-1)),
+    counter,
+    btn('Next', '', () => move(1))
+  );
+  track.addEventListener(
+    'scroll',
+    () => {
+      const label = current() + 1 + ' / ' + photos.length;
+      if (counter.textContent !== label) counter.textContent = label;
+    },
+    { passive: true }
+  );
+  gallery.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    move(event.key === 'ArrowLeft' ? -1 : 1);
+  });
+  gallery.append(track, controls);
+  return gallery;
+}
+function renderProductMedia(row, info) {
+  const body = $('product-body');
+  const extras = row.extraImages ?? [];
+  const photos = JSON.stringify([row.image, extras, row.imageVariants]);
+  // Keep the current slide when the shopper changes size.
+  if (activePhoto === photos) {
+    body.lastElementChild.replaceWith(info);
+    return;
+  }
+  activePhoto = photos;
+  const media = extras.length
+    ? createGallery([row, ...extras.map((image) => ({ ...row, image, imageVariants: [] }))])
+    : picture(row, 'detail-photo');
+  body.replaceChildren(media, info);
 }
 function renderProduct(rows) {
   if (!rows.some((s) => s.sku === selected))
@@ -272,7 +328,7 @@ function renderProduct(rows) {
   updatePurchaseOptions();
   actions.append(add, buy);
   info.append(options, actions, orderNote);
-  $('product-body').replaceChildren(picture(row, 'detail-photo'), info);
+  renderProductMedia(row, info);
 }
 function begin(flow, items) {
   const pending = read(sessionStorage, DRAFT, null);

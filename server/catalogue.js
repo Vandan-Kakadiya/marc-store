@@ -55,6 +55,7 @@ export function validateCatalogue(obj) {
   const groups = new Set(),
     codes = new Set();
   const products = obj.products.map((p) => {
+    const extraImages = p?.extraImages ?? [];
     if (
       !p ||
       !/^[a-f0-9]{24}$/.test(p.id || '') ||
@@ -66,6 +67,11 @@ export function validateCatalogue(obj) {
       !p.colour.trim() ||
       p.colour.length > 100 ||
       !imageOK(p.image) ||
+      !Array.isArray(extraImages) ||
+      extraImages.length > 2 ||
+      (extraImages.length > 0 && !p.image) ||
+      extraImages.some((src) => !src || src === p.image || !imageOK(src)) ||
+      new Set(extraImages).size !== extraImages.length ||
       !Array.isArray(p.skus) ||
       !p.skus.length
     )
@@ -91,7 +97,14 @@ export function validateCatalogue(obj) {
       sizes.add(s.size.toLowerCase());
       return { sku: s.sku, size: s.size, paise: s.paise, price: s.paise / 100 };
     });
-    return { id: p.id, name: p.name, colour: p.colour, image: p.image, skus };
+    return {
+      id: p.id,
+      name: p.name,
+      colour: p.colour,
+      image: p.image,
+      skus,
+      ...(extraImages.length ? { extraImages } : {})
+    };
   });
   if (codes.size > 1000) throw Error('The catalogue has too many options.');
   const p = obj.payment;
