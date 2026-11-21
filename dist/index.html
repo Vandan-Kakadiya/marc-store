@@ -47,12 +47,38 @@
     <script>
       {
         const loader = document.getElementById('store-loading');
-        setTimeout(() => {
-          if (!loader.hasAttribute('data-ready')) loader.hidden = false;
-        }, 150);
-        setTimeout(() => {
+        const minimumMs = 600;
+        let catalogueReady = false;
+
+        loader.hidden = false;
+        const startedAt = performance.now();
+
+        const observer = new MutationObserver(updateLoader);
+        observer.observe(loader, {
+          attributes: true,
+          attributeFilter: ['data-ready', 'hidden'],
+        });
+
+        const minimumTimer = setTimeout(updateLoader, minimumMs);
+        const fallbackTimer = setTimeout(hideLoader, 2500);
+
+        function updateLoader() {
+          catalogueReady =
+            catalogueReady || loader.hasAttribute('data-ready') || loader.hidden;
+
+          if (catalogueReady && performance.now() - startedAt >= minimumMs) {
+            hideLoader();
+          } else if (loader.hidden) {
+            loader.hidden = false;
+          }
+        }
+
+        function hideLoader() {
+          observer.disconnect();
+          clearTimeout(minimumTimer);
+          clearTimeout(fallbackTimer);
           loader.hidden = true;
-        }, 2500);
+        }
       }
     </script>
     <a class="skip" href="#shop">Skip to merchandise</a>
