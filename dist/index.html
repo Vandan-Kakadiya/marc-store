@@ -88,6 +88,29 @@
           animation: none;
         }
       }
+
+      #home-banners {
+        position: relative;
+      }
+
+      #home-banners > .gallery-controls {
+        display: flex;
+        justify-content: center;
+        position: absolute;
+        inset: auto 0 4px;
+        z-index: 1;
+        background: transparent;
+        color: white;
+        pointer-events: none;
+      }
+
+      #home-banners .gallery-dot {
+        pointer-events: auto;
+      }
+
+      #home-banners .gallery-dot::before {
+        box-shadow: 0 0 2px 1px #0008;
+      }
     </style>
     <script id="catalogue-snapshot" type="application/json"></script>
     <script type="module" src="market.js?v=15"></script>
