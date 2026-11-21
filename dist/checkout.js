@@ -20,6 +20,7 @@ const receiptKey = 'marc-vercel-receipts-v1';
 const path = new URL(location.href);
 const fields = $('contact-form').elements,
   proof = $('proof-form').elements;
+const orderProgress = $('order-progress');
 const zones = ['login', 'contact', 'payment', 'receipt', 'orders'];
 const indiaTime = new Intl.DateTimeFormat('en-IN', {
   dateStyle: 'medium',
@@ -41,10 +42,26 @@ function message(text = '', retry = false) {
   $('checkout-status').textContent = text;
   $('retry-checkout').hidden = !retry;
 }
-function terms(id, value) {
-  const el = $(id);
-  el.hidden = !value;
-  el.querySelector('.terms-copy').textContent = value || '';
+function setOrderProgress(percent) {
+  const ring = $('order-progress-ring');
+  ring.style.setProperty('--order-progress', percent + '%');
+  ring.setAttribute('aria-valuenow', String(percent));
+  $('order-progress-percent').textContent = percent + '%';
+}
+function startOrderProgress() {
+  const started = performance.now();
+  let percent = 1;
+  setOrderProgress(percent);
+  orderProgress.showModal();
+  return setInterval(() => {
+    // Estimate progress while the server prepares its save confirmation.
+    const elapsed = performance.now() - started;
+    const next = 1 + Math.round(94 * (1 - Math.exp(-elapsed / 2400)));
+    if (percent !== next) {
+      percent = next;
+      setOrderProgress(percent);
+    }
+  }, 80);
 }
 function summary(items, fixed = false) {
   const target = $('summary-lines');
@@ -93,7 +110,6 @@ function openContact() {
   show('contact');
   fields.email.value = user.email;
   if (!fields.name.value) fields.name.value = user.name || '';
-  terms('terms-box', catalogue.terms);
   updateRoll();
 }
 function openPayment(record) {
@@ -112,7 +128,6 @@ function openPayment(record) {
     );
   qr.src = record.payment.qr;
   $('qr-link').href = record.payment.qr;
-  terms('locked-terms', record.terms);
   $('cancel-unpaid').hidden = !!draft.sent;
   $('proof-tip').textContent = draft.sent
     ? 'Retry with the same UTR and screenshot. Pay only once.'
@@ -265,6 +280,7 @@ async function boot() {
 for (const role of affiliations) fields.affiliation.add(new Option(role, role));
 fields.affiliation.onchange = updateRoll;
 $('retry-checkout').onclick = boot;
+orderProgress.addEventListener('cancel', (event) => event.preventDefault());
 $('google').onclick = () =>
   location.assign('/api/auth/start' + (ordersMode ? '?orders=1' : ''));
 for (const id of ['switch-account', 'switch-order-account']) {
@@ -310,7 +326,6 @@ $('contact-form').onsubmit = async (e) => {
       try {
         catalogue = await liveCatalogue();
         summary(draft.items);
-        terms('terms-box', catalogue.terms);
       } catch {}
     }
     message(e.message, true);
@@ -358,8 +373,10 @@ $('proof-form').onsubmit = async (e) => {
   draft = pending;
   $('cancel-unpaid').hidden = true;
   $('submit-proof').disabled = true;
-  message('Saving your order and screenshot…');
+  message();
+  let progressTimer;
   try {
+    progressTimer = startOrderProgress();
     const saved = await api('place', {
       method: 'POST',
       body: payload,
@@ -371,7 +388,10 @@ $('proof-form').onsubmit = async (e) => {
     const completed = { ...draft, receipt: saved.token };
     const savedDraft = save(sessionStorage, DRAFT, completed);
     draft = completed;
-    message();
+    clearInterval(progressTimer);
+    setOrderProgress(100);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    orderProgress.close();
     openReceipt(saved);
     proof.proof.value = '';
     try {
@@ -391,6 +411,8 @@ $('proof-form').onsubmit = async (e) => {
       message(e.message + ' Order reference ' + order.id);
     }
   } finally {
+    clearInterval(progressTimer);
+    orderProgress.close();
     $('submit-proof').disabled = false;
   }
 };
