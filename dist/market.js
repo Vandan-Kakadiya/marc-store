@@ -253,7 +253,7 @@ function setupCarousel(carousel, track, slideName) {
       }
       const next = (current() + 1) % slideCount;
       showPhoto(next, next === 0);
-    }, 4000);
+  }, slideName === 'banner' ? 3000 : 4000);
   }
   function showPhoto(index, wrap = false) {
     track.scrollTo({
