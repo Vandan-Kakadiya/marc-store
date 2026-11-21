@@ -28,7 +28,7 @@ const groups = [
 const quotePurpose = 'order quote';
 const receiptPurpose = 'order receipt';
 const quoteMax = 210000;
-const orderNumberPattern = /^MARC_(?:[0-9]{6}|STAFF|OTHER)_[1-9][0-9]*$/;
+const orderNumberPattern = /^MARC_(?:[0-9]{6,7}|STAFF|OTHER)_[1-9][0-9]*$/;
 const proofTypes = ['image/png', 'image/jpeg', 'image/webp'];
 function storageReady(env) {
   return !!(
@@ -39,14 +39,14 @@ function storageReady(env) {
 function contactInfo(data, buyer) {
   const name = requiredText(data?.name, 120, 'your full name');
   const phone = data?.phone;
-  if (typeof phone !== 'string' || !/^[0-9]{10}$/.test(phone))
-    fail(400, 'Enter a mobile number with exactly 10 digits.');
+  if (typeof phone !== 'string' || !/^[1-9][0-9]{9}$/.test(phone))
+    fail(400, 'Enter a 10-digit mobile number starting with 1 through 9.');
   if (!groups.includes(data.affiliation))
     fail(400, 'Choose your programme or affiliation.');
   const student = groups.slice(0, 4).includes(data.affiliation);
   const roll = student ? data.roll : '';
-  if (student && (typeof roll !== 'string' || !/^[0-9]{6}$/.test(roll)))
-    fail(400, 'Enter a roll number with exactly 6 digits.');
+  if (student && (typeof roll !== 'string' || !/^[0-9]{7}$/.test(roll)))
+    fail(400, 'Enter a roll number with exactly 7 digits.');
   return {
     name,
     email: buyer.email,
