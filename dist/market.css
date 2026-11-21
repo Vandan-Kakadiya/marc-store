@@ -670,24 +670,54 @@ dialog::backdrop {
   scroll-snap-stop: always;
 }
 .gallery-controls {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
+  justify-content: center;
+  padding: 0 48px;
   color: var(--navy);
 }
 .gallery-controls button {
+  display: grid;
+  place-items: center;
   min-height: 44px;
-  padding: 5px 12px;
-  border: 1px solid var(--rule);
-  border-radius: 4px;
-  background: #fff;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
   color: inherit;
+  cursor: pointer;
 }
-.gallery-counter {
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
+.gallery-dot {
+  width: 30px;
+}
+.gallery-dot::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+.gallery-dot[aria-current='true']::before {
+  background: currentColor;
+}
+.gallery-rotation {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  width: 36px;
+}
+.gallery-rotation::before {
+  content: '';
+  width: 8px;
+  height: 10px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+.gallery-rotation[data-playing='true']::before {
+  border-inline: 2px solid currentColor;
+  background: transparent;
+  clip-path: none;
 }
 @media (prefers-reduced-motion: no-preference) {
   .gallery-track {

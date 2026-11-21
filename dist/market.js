@@ -173,33 +173,85 @@ function createGallery(photos) {
   track.append(...photos.map((row) => picture(row, 'detail-photo')));
 
   const controls = node('div', 'gallery-controls');
-  const counter = node('span', 'gallery-counter', '1 / ' + photos.length);
-  counter.setAttribute('aria-live', 'polite');
-  counter.setAttribute('aria-atomic', 'true');
-  const current = () => Math.round(track.scrollLeft / (track.clientWidth || 1));
-  const move = (delta) => {
-    const next = (current() + delta + photos.length) % photos.length;
-    track.scrollTo({ left: next * track.clientWidth });
-  };
-  controls.append(
-    btn('Previous', '', () => move(-1)),
-    counter,
-    btn('Next', '', () => move(1))
+  const rotation = btn('', 'gallery-rotation', () => setPlaying(!playing));
+  const dots = photos.map((_, index) => {
+    const dot = btn('', 'gallery-dot', () => showPhoto(index));
+    dot.setAttribute('aria-label', 'Show photo ' + (index + 1) + ' of ' + photos.length);
+    return dot;
+  });
+  let playing = !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    pointerDown = false,
+    selectedDot = 0,
+    timer;
+
+  const current = () => Math.max(
+    0,
+    Math.min(photos.length - 1, Math.round(track.scrollLeft / (track.clientWidth || 1)))
   );
+  function restartRotation() {
+    clearTimeout(timer);
+    if (!playing || pointerDown) return;
+    timer = setTimeout(() => {
+      if (!gallery.isConnected || !$('product').open) return;
+      if (document.hidden) {
+        restartRotation();
+        return;
+      }
+      const next = (current() + 1) % photos.length;
+      showPhoto(next, next === 0);
+    }, 4000);
+  }
+  function setPlaying(value) {
+    playing = value;
+    rotation.dataset.playing = String(playing);
+    rotation.setAttribute('aria-label', playing ? 'Pause slideshow' : 'Play slideshow');
+    restartRotation();
+  }
+  function showPhoto(index, wrap = false) {
+    track.scrollTo({
+      left: index * track.clientWidth,
+      behavior: wrap ? 'instant' : 'auto'
+    });
+    restartRotation();
+  }
+  dots[0].setAttribute('aria-current', 'true');
+  controls.append(rotation, ...dots);
   track.addEventListener(
     'scroll',
     () => {
-      const label = current() + 1 + ' / ' + photos.length;
-      if (counter.textContent !== label) counter.textContent = label;
+      const index = current();
+      if (index === selectedDot) return;
+      dots[selectedDot].removeAttribute('aria-current');
+      dots[index].setAttribute('aria-current', 'true');
+      selectedDot = index;
+      restartRotation();
     },
     { passive: true }
   );
+  track.addEventListener('pointerdown', () => {
+    pointerDown = true;
+    restartRotation();
+  });
+  function releasePointer() {
+    if (!pointerDown) return;
+    pointerDown = false;
+    restartRotation();
+  }
+  track.addEventListener('pointerup', releasePointer);
+  track.addEventListener('pointercancel', releasePointer);
+  track.addEventListener('pointerleave', releasePointer);
+  gallery.addEventListener('focusin', (event) => {
+    if (event.target !== rotation && event.target.matches(':focus-visible'))
+      setPlaying(false);
+  });
   gallery.addEventListener('keydown', (event) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    move(event.key === 'ArrowLeft' ? -1 : 1);
+    const step = event.key === 'ArrowLeft' ? -1 : 1;
+    showPhoto((current() + step + photos.length) % photos.length);
   });
   gallery.append(track, controls);
+  setPlaying(playing);
   return gallery;
 }
 function renderProductMedia(row, info) {
