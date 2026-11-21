@@ -22,6 +22,7 @@ let catalog = published || cachedCatalogue(),
   seenLive = Boolean(published),
   noticed = '',
   selected = '',
+  selectedQuantity = 1,
   activeGroup = '',
   refreshTime = published ? Date.now() : 0;
 let toastTimer;
@@ -38,20 +39,20 @@ const groups = () =>
   );
 const groupKey = (rows) =>
   JSON.stringify([rows[0].name.toLowerCase(), rows[0].colour.toLowerCase()]);
-const count = () => bag.reduce((n, r) => n + r.qty, 0);
+const count = (items = bag) => items.reduce((n, r) => n + r.qty, 0);
 const allowsOrder = () => configured && catalog.open;
 const toast = (message) => {
   clearTimeout(toastTimer);
   $('toast').textContent = message;
   toastTimer = setTimeout(() => ($('toast').textContent = ''), 3000);
 };
-async function updateBag(reduce) {
+async function updateBag(reduce, reportError = toast) {
   try {
     bag = await changeBag(reduce);
     $('bag-count').textContent = count();
     return true;
   } catch (e) {
-    toast(e.message);
+    reportError(e.message);
     return false;
   }
 }
@@ -156,6 +157,7 @@ async function refresh() {
 function openProduct(rows) {
   activeGroup = groupKey(rows);
   selected = rows.length === 1 ? rows[0].sku : '';
+  selectedQuantity = 1;
   renderProduct(rows);
   $('product').showModal();
 }
@@ -174,8 +176,7 @@ function renderProduct(rows) {
       'p',
       'detail-price',
       money(picked ? picked.paise : Math.min(...rows.map((s) => s.paise)))
-    ),
-    node('p', 'option-label', 'Size / option')
+    )
   );
   const sizes = node('div', 'sizes');
   for (const option of rows) {
@@ -187,42 +188,81 @@ function renderProduct(rows) {
     b.setAttribute('aria-pressed', String(option.sku === selected));
     sizes.append(b);
   }
+  const sizeOptions = node('div');
+  sizeOptions.append(node('p', 'option-label', 'Size / option'), sizes);
+  const quantityLabel = node('label', 'product-quantity');
+  const quantity = node('select');
+  for (let amount = 1; amount <= catalog.limit; amount++) {
+    quantity.add(new Option(String(amount), String(amount)));
+  }
+  selectedQuantity = Math.min(selectedQuantity, catalog.limit);
+  quantity.value = String(selectedQuantity);
+  quantityLabel.append(node('span', 'option-label', 'Quantity'), quantity);
+  const options = node('div', 'product-options');
+  options.append(sizeOptions, quantityLabel);
+
+  const orderNote = node('small');
+  orderNote.setAttribute('aria-live', 'polite');
   const actions = node('div', 'buyline');
   const add = btn('Add to bag', 'action outline', async () => {
     const sku = selected;
-    if (
-      await updateBag((items) => {
-        if (items.reduce((n, r) => n + r.qty, 0) >= catalog.limit)
-          throw Error('Your bag has reached the order limit.');
+    const qty = selectedQuantity;
+    add.disabled = true;
+    buy.disabled = true;
+    quantity.disabled = true;
+    let errorMessage = '';
+    const added = await updateBag(
+      (items) => {
+        if (count(items) + qty > catalog.limit)
+          throw Error('This quantity would exceed the order limit.');
         const line = items.find((r) => r.sku === sku);
-        if (line) line.qty++;
-        else items.push({ sku, qty: 1 });
+        if (line) line.qty += qty;
+        else items.push({ sku, qty });
         return items;
-      })
-    ) {
-      $('product').close();
+      },
+      (message) => {
+        errorMessage = message;
+      }
+    );
+    if (added) {
+      if ($('product').open && activeGroup === groupKey(rows)) $('product').close();
       toast('Added to your bag.');
+      return;
     }
+    bag = getBag();
+    $('bag-count').textContent = count();
+    updatePurchaseOptions();
+    orderNote.textContent = errorMessage;
   });
   const buy = btn('Buy now', 'action orange', () =>
-    begin('buy-now', [{ sku: selected, qty: 1 }])
+    begin('buy-now', [{ sku: selected, qty: selectedQuantity }])
   );
-  add.disabled = !picked || !allowsOrder() || count() >= catalog.limit;
-  buy.disabled = !picked || !allowsOrder();
+  function updatePurchaseOptions() {
+    const ordering = allowsOrder();
+    const remaining = Math.max(0, catalog.limit - count());
+    const fitsInBag = selectedQuantity <= remaining;
+    quantity.disabled = !ordering;
+    add.disabled = !picked || !ordering || !fitsInBag;
+    buy.disabled = !picked || !ordering;
+
+    if (!configured) orderNote.textContent = 'Preview only';
+    else if (!ordering) orderNote.textContent = 'Ordering is paused.';
+    else if (!fitsInBag) {
+      orderNote.textContent = remaining
+        ? 'You can add ' + remaining + ' more to your bag.'
+        : 'Your bag has reached the order limit.';
+    } else {
+      const units = catalog.limit === 1 ? ' item' : ' items';
+      orderNote.textContent = 'Maximum ' + catalog.limit + units + ' per order.';
+    }
+  }
+  quantity.addEventListener('change', () => {
+    selectedQuantity = Number(quantity.value);
+    updatePurchaseOptions();
+  });
+  updatePurchaseOptions();
   actions.append(add, buy);
-  info.append(
-    sizes,
-    actions,
-    node(
-      'small',
-      '',
-      !configured
-        ? 'Preview only'
-        : !allowsOrder()
-          ? 'Ordering is paused.'
-          : 'Maximum ' + catalog.limit + ' items per order.'
-    )
-  );
+  info.append(options, actions, orderNote);
   $('product-body').replaceChildren(picture(row, 'detail-photo'), info);
 }
 function begin(flow, items) {
@@ -278,11 +318,7 @@ function renderBag() {
       const b = btn(delta === 1 ? '+' : '−', '', async () => {
         await updateBag((current) => {
           const entry = current.find((r) => r.sku === item.sku);
-          if (
-            entry &&
-            (delta < 0 ||
-              current.reduce((n, r) => n + r.qty, 0) < catalog.limit)
-          )
+          if (entry && (delta < 0 || count(current) < catalog.limit))
             entry.qty += delta;
           return current.filter((r) => r.qty > 0);
         });

@@ -628,20 +628,41 @@ dialog::backdrop {
   font-size: 14px;
   font-weight: 700;
 }
+.product-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 20px;
+  margin-bottom: 22px;
+}
+.product-options > div {
+  min-width: 0;
+}
 .sizes {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 8px 0 22px;
+  margin-top: 8px;
 }
 .sizes button,
-.control button {
+.control button,
+.product-quantity select {
   padding: 7px 12px;
   min-height: 40px;
   border: 1px solid var(--rule);
   border-radius: 3px;
   background: #fff;
   font-size: 14px;
+}
+.product-quantity {
+  display: grid;
+  gap: 8px;
+}
+.product-quantity select {
+  min-width: 4.5rem;
+  min-height: 44px;
+  color: var(--ink);
+  font-size: 16px;
 }
 .sizes [aria-pressed='true'] {
   background: var(--navy);
@@ -990,7 +1011,7 @@ details summary {
   .detail-price {
     margin: 6px 0 12px;
   }
-  .sizes {
+  .product-options {
     margin-bottom: 14px;
   }
   .checkout-layout {
