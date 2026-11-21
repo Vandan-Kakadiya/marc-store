@@ -6,10 +6,16 @@
     <meta name="theme-color" content="#292e6b" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>Checkout | MARC Store</title>
+    <script>
+      if (new URLSearchParams(location.search).get('orders') === '1') {
+        document.documentElement.classList.add('orders-page');
+      }
+    </script>
     <link rel="icon" href="assets/marc-logo.png" />
-    <link rel="stylesheet" href="market.css?v=7" />
+    <link rel="modulepreload" href="market-core.js?v=6" />
+    <link rel="stylesheet" href="market.css?v=8" />
     <link rel="stylesheet" href="order-progress.css?v=2" />
-    <script type="module" src="checkout.js?v=8"></script>
+    <script type="module" src="checkout.js?v=9"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -29,12 +35,15 @@
       </div>
     </header>
     <main class="wrap checkout-main">
-      <h1>CHECKOUT</h1>
+      <h1>
+        <span class="checkout-heading">CHECKOUT</span>
+        <span class="orders-heading">MY ORDERS</span>
+      </h1>
       <div class="checkout-layout">
         <div class="checkout-panel">
           <section id="login">
             <h2>Sign in to checkout</h2>
-            <p>
+            <p id="login-intro">
               Use your Google account to save your order and payment receipt.
             </p>
             <button class="action navy" id="google" disabled>
@@ -145,7 +154,6 @@
             </button>
           </section>
           <section id="orders" hidden>
-            <h2>My orders</h2>
             <div id="past-orders"></div>
             <button id="switch-order-account" type="button" class="text-btn">
               Use another Google account
@@ -157,6 +165,7 @@
             <p id="receipt-status"></p>
             <p>Order number <strong id="order-number"></strong></p>
             <p>Submitted <time id="order-time"></time></p>
+            <div class="receipt-items" id="receipt-items"></div>
             <a href="checkout.html?orders=1" id="back-to-orders" class="text-btn" hidden
               >Back to My orders</a
             >
@@ -176,9 +185,11 @@
         </div>
         <aside class="summary">
           <h2>Order summary</h2>
-          <div id="summary-lines"></div>
-          <div class="total">
-            <span>Total</span><strong id="summary-total">—</strong>
+          <div id="order-items">
+            <div id="summary-lines"></div>
+            <div class="total">
+              <span>Total</span><strong id="summary-total">—</strong>
+            </div>
           </div>
         </aside>
       </div>

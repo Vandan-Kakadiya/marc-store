@@ -141,13 +141,11 @@ summary:focus-visible {
 .head-row nav {
   gap: 28px;
 }
-.nav-shop,
 .back {
   font-size: 14px;
   font-weight: 700;
   text-decoration: none;
 }
-.nav-shop:hover,
 .back:hover {
   text-decoration: underline;
 }
@@ -902,9 +900,6 @@ details summary {
   .head-row nav {
     gap: 12px;
   }
-  .nav-shop {
-    display: none;
-  }
   .hero-grid {
     grid-template-columns: 1fr;
     min-height: auto;
@@ -1076,10 +1071,28 @@ details summary {
 }
 .orders-nav {
   font-size: 13px;
+  font-weight: 700;
   text-decoration: none;
 }
 .orders-nav:hover {
   text-decoration: underline;
+}
+.orders-heading,
+.orders-page .checkout-heading,
+.orders-page .summary {
+  display: none;
+}
+.orders-page .orders-heading {
+  display: inline;
+}
+.orders-page .checkout-layout {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 860px;
+}
+.receipt-items:not(:empty) {
+  border-top: 1px solid var(--rule);
+  margin: 16px 0;
+  padding-top: 10px;
 }
 .past-order {
   padding: 12px 0;

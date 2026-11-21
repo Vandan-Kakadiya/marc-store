@@ -14,7 +14,7 @@ import {
   post,
   read,
   save
-} from './market-core.js?v=5';
+} from './market-core.js?v=6';
 
 const legacyReceiptKey = 'marc-vercel-receipts-v1';
 const path = new URL(location.href);
@@ -31,7 +31,7 @@ let draft = read(sessionStorage, DRAFT, null),
   catalogue = cachedCatalogue(),
   user,
   order;
-let ordersMode =
+const ordersMode =
   path.searchParams.get('orders') === '1' || !draft?.items?.length;
 let loadCount = 0;
 let sessionTimer, sessionEndsAt;
@@ -48,6 +48,8 @@ function showSignIn() {
   $('login').querySelector('h2').textContent = ordersMode
     ? 'Sign in to view your orders'
     : 'Sign in to checkout';
+  if (ordersMode)
+    $('login-intro').textContent = 'Use the Google account you used to place your orders.';
 }
 function expireSession(
   text = 'Your 20-minute session ended. Sign in with Google to continue.'
@@ -116,9 +118,8 @@ function summary(items, fixed = false) {
         row.colour + ' / ' + row.size + ' · Qty ' + item.qty
       )
     );
-    const photoRow = row.image
-      ? row
-      : { ...row, image: catalogue.skus.find((s) => s.sku === row.sku)?.image };
+    const listed = row.image ? row : catalogue.skus.find((s) => s.sku === row.sku);
+    const photoRow = { ...row, image: listed?.image, imageVariants: listed?.imageVariants };
     line.append(
       picture(photoRow, 'thumb'),
       description,
@@ -466,5 +467,11 @@ $('proof-form').onsubmit = async (e) => {
   }
 };
 
+if (ordersMode) {
+  document.documentElement.classList.add('orders-page');
+  document.title = 'My orders | MARC Store';
+  $('receipt-items').append($('order-items'));
+  showSignIn();
+}
 summary(ordersMode ? [] : draft.items);
 boot();

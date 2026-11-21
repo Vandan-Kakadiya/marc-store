@@ -1,0 +1,28 @@
+{
+  "assets/red-black-sweat-shirt.jpeg": {
+    "sha256": "db428273d57b9a64f81eb04ac6c858ec346b01a7350200f346500b35b19a1ce2",
+    "variants": [
+      {
+        "src": "assets/optimized/579a5709349f070cf21f-480.webp",
+        "width": 480
+      },
+      {
+        "src": "assets/optimized/aca38bea6a60f5efb80a-960.webp",
+        "width": 960
+      }
+    ]
+  },
+  "assets/green-white-sweat-shirt.jpeg": {
+    "sha256": "a9a65b3dd816f4404a67eb6989225d3db1c7772b365e59cb84eb1e177ba0392c",
+    "variants": [
+      {
+        "src": "assets/optimized/36fefcdb78a2d0704061-480.webp",
+        "width": 480
+      },
+      {
+        "src": "assets/optimized/13e1e7a23cfd7088a10f-960.webp",
+        "width": 960
+      }
+    ]
+  }
+}

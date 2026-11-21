@@ -12,13 +12,16 @@ export const BAG = 'marc-market-bag-v3',
   DRAFT = 'marc-vercel-checkout-v1',
   CACHE = 'marc-vercel-catalogue-v1';
 export const $ = (id) => document.getElementById(id);
-export const money = (paise) =>
+const rupeeFormats = [0, 2].map((digits) =>
   new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    minimumFractionDigits: paise % 100 ? 2 : 0,
+    minimumFractionDigits: digits,
     maximumFractionDigits: 2
-  }).format(paise / 100);
+  })
+);
+export const money = (paise) =>
+  rupeeFormats[paise % 100 ? 1 : 0].format(paise / 100);
 export function read(store, key, fallback) {
   try {
     return JSON.parse(store.getItem(key)) ?? fallback;
@@ -119,8 +122,25 @@ export function picture(row, cls) {
   im.alt = row.name + ' · ' + row.colour;
   im.loading = 'lazy';
   im.decoding = 'async';
-  im.src = src;
-  im.addEventListener('error', placeholder, { once: true });
+  const variants = row.imageVariants;
+  if (variants?.length) {
+    im.sizes =
+      cls === 'detail-photo'
+        ? '(max-width: 680px) 88vw, 480px'
+        : cls === 'thumb'
+          ? '64px'
+          : '(max-width: 680px) 36vw, (max-width: 950px) 24vw, 260px';
+    im.srcset = variants
+      .map(({ src, width }) => src + ' ' + width + 'w')
+      .join(', ');
+  }
+  im.addEventListener('error', () => {
+    if (im.srcset) {
+      im.removeAttribute('srcset');
+      im.src = src;
+    } else placeholder();
+  });
+  im.src = variants?.[0]?.src || src;
   frame.append(im);
   return frame;
 }
@@ -190,25 +210,27 @@ export const post = (action, data = {}) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(data)
   });
-export async function liveCatalogue() {
-  const response = await fetch('/catalogue.json', {
-    cache: 'no-cache',
-    signal: AbortSignal.timeout(9000)
-  });
-  if (!response.ok) throw Error('Could not load the published catalogue.');
-  const data = await response.json();
-  if (data.apiVersion !== 3 || !Array.isArray(data.products))
+function saveCatalogue(data) {
+  if (data?.apiVersion !== 3 || !Array.isArray(data.products))
     throw Error('The published catalogue is unavailable.');
-  const skus = data.products.flatMap((p) =>
-    p.skus.map((s) => ({
+  const skus = data.products.flatMap((p) => {
+    const imageVariants = Array.isArray(p.imageVariants)
+      ? p.imageVariants.filter((variant) =>
+          [480, 960].includes(variant?.width) &&
+          typeof variant.src === 'string' &&
+          /^assets\/optimized\/[a-f0-9]{20}-(480|960)\.webp$/.test(variant.src)
+        )
+      : [];
+    return p.skus.map((s) => ({
       sku: s.sku,
       name: p.name,
       colour: p.colour,
       size: s.size,
       paise: s.paise,
-      image: p.image
-    }))
-  );
+      image: p.image,
+      imageVariants
+    }));
+  });
   const catalog = {
     skus,
     open: data.ready === true,
@@ -218,6 +240,22 @@ export async function liveCatalogue() {
   };
   save(localStorage, CACHE, { time: Date.now(), catalog });
   return catalog;
+}
+export function publishedCatalogue() {
+  if (!configured) return null;
+  try {
+    return saveCatalogue(JSON.parse($('catalogue-snapshot')?.textContent || ''));
+  } catch {
+    return null;
+  }
+}
+export async function liveCatalogue() {
+  const response = await fetch('/catalogue.json', {
+    cache: 'no-cache',
+    signal: AbortSignal.timeout(9000)
+  });
+  if (!response.ok) throw Error('Could not load the published catalogue.');
+  return saveCatalogue(await response.json());
 }
 export async function finishBag(draft) {
   if (draft.flow !== 'bag' || draft.bagSettled) return;

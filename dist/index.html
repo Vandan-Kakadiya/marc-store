@@ -17,10 +17,11 @@
       type="font/woff2"
       crossorigin
     />
-    <link rel="modulepreload" href="market-core.js?v=5" />
-    <link rel="stylesheet" href="market.css?v=7" />
+    <link rel="modulepreload" href="market-core.js?v=6" />
+    <link rel="stylesheet" href="market.css?v=8" />
     <link rel="stylesheet" href="order-progress.css?v=2" />
-    <script type="module" src="market.js?v=6"></script>
+    <script id="catalogue-snapshot" type="application/json"></script>
+    <script type="module" src="market.js?v=7"></script>
   </head>
   <body>
     <div
@@ -46,7 +47,9 @@
     <script>
       {
         const loader = document.getElementById('store-loading');
-        loader.hidden = false;
+        setTimeout(() => {
+          if (!loader.hasAttribute('data-ready')) loader.hidden = false;
+        }, 150);
         setTimeout(() => {
           loader.hidden = true;
         }, 2500);
@@ -68,9 +71,8 @@
           /><span class="wordmark">MARC STORE</span></a
         >
         <nav>
-          <a class="orders-nav" href="checkout.html?orders=1">My orders</a
-          ><a href="#shop" class="nav-shop">Shop</a
-          ><button id="open-bag" class="bag-btn">
+          <a class="orders-nav" href="checkout.html?orders=1">My orders</a>
+          <button id="open-bag" class="bag-btn">
             <span class="bag-glyph" aria-hidden="true"></span>Bag
             <b id="bag-count">0</b>
           </button>

@@ -11,17 +11,19 @@ import {
   money,
   node,
   picture,
+  publishedCatalogue,
   read,
   save
-} from './market-core.js?v=5';
-let catalog = cachedCatalogue(),
+} from './market-core.js?v=6';
+const published = publishedCatalogue();
+let catalog = published || cachedCatalogue(),
   bag = getBag(),
   busy = false,
-  seenLive = false,
+  seenLive = Boolean(published),
   noticed = '',
   selected = '',
   activeGroup = '',
-  refreshTime = 0;
+  refreshTime = published ? Date.now() : 0;
 let toastTimer;
 const groups = () =>
   Object.values(
@@ -354,8 +356,10 @@ setInterval(() => {
 }, 60000);
 const startupLoader = $('store-loading');
 function hideStartupLoader() {
-  if (startupLoader) startupLoader.hidden = true;
+  if (!startupLoader) return;
+  startupLoader.hidden = true;
+  startupLoader.setAttribute('data-ready', '');
 }
 repaint();
-if (catalog.skus.length || !configured) hideStartupLoader();
-refresh().finally(hideStartupLoader);
+if (published || catalog.skus.length || !configured) hideStartupLoader();
+if (!published) refresh().finally(hideStartupLoader);
