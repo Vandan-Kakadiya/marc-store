@@ -17,16 +17,15 @@
       type="font/woff2"
       crossorigin
     />
-    <link rel="modulepreload" href="market-core.js?v=6" />
-    <link rel="stylesheet" href="market.css?v=8" />
-    <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script id="catalogue-snapshot" type="application/json"></script>
-    <script type="module" src="market.js?v=7"></script>
+    <link rel="modulepreload" href="market-core.js?v=5" />
+    <link rel="stylesheet" href="market.css?v=7" />
+    <link rel="stylesheet" href="order-progress.css?v=2" />
+    <script type="module" src="market.js?v=6"></script>
   </head>
   <body>
     <div
       id="store-loading"
-      class="order-progress store-progress spinning-progress"
+      class="order-progress store-progress"
       role="status"
       hidden
     >
@@ -47,38 +46,10 @@
     <script>
       {
         const loader = document.getElementById('store-loading');
-        const minimumMs = 600;
-        let catalogueReady = false;
-
         loader.hidden = false;
-        const startedAt = performance.now();
-
-        const observer = new MutationObserver(updateLoader);
-        observer.observe(loader, {
-          attributes: true,
-          attributeFilter: ['data-ready', 'hidden'],
-        });
-
-        const minimumTimer = setTimeout(updateLoader, minimumMs);
-        const fallbackTimer = setTimeout(hideLoader, 2500);
-
-        function updateLoader() {
-          catalogueReady =
-            catalogueReady || loader.hasAttribute('data-ready') || loader.hidden;
-
-          if (catalogueReady && performance.now() - startedAt >= minimumMs) {
-            hideLoader();
-          } else if (loader.hidden) {
-            loader.hidden = false;
-          }
-        }
-
-        function hideLoader() {
-          observer.disconnect();
-          clearTimeout(minimumTimer);
-          clearTimeout(fallbackTimer);
+        setTimeout(() => {
           loader.hidden = true;
-        }
+        }, 2500);
       }
     </script>
     <a class="skip" href="#shop">Skip to merchandise</a>
@@ -97,8 +68,9 @@
           /><span class="wordmark">MARC STORE</span></a
         >
         <nav>
-          <a class="orders-nav" href="checkout.html?orders=1">My orders</a>
-          <button id="open-bag" class="bag-btn">
+          <a class="orders-nav" href="checkout.html?orders=1">My orders</a
+          ><a href="#shop" class="nav-shop">Shop</a
+          ><button id="open-bag" class="bag-btn">
             <span class="bag-glyph" aria-hidden="true"></span>Bag
             <b id="bag-count">0</b>
           </button>
@@ -183,7 +155,7 @@
     </main>
     <footer>
       <div class="wrap foot">
-        <span>MARC <i>/</i> IIM Trichy  <br><a href="privacy.html">Order privacy</a><br><a href="marc-rules.html">MARC Rule</a></span
+        <span>MARC <i>/</i> IIM Trichy · <a href="privacy.html">Order privacy</a></span
         >
         <div>
           <div class="credit">
