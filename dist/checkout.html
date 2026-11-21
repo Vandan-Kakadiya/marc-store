@@ -14,8 +14,8 @@
     <link rel="icon" href="assets/marc-logo.png" />
     <link rel="modulepreload" href="market-core.js?v=6" />
     <link rel="stylesheet" href="market.css?v=8" />
-    <link rel="stylesheet" href="order-progress.css?v=2" />
-    <script type="module" src="checkout.js?v=9"></script>
+    <link rel="stylesheet" href="order-progress.css?v=3" />
+    <script type="module" src="checkout.js?v=10"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -257,6 +257,28 @@
         <p id="order-progress-note">
           Keep this page open while we save your order and payment screenshot.
         </p>
+      </div>
+    </dialog>
+    <dialog
+      class="order-progress spinning-progress"
+      id="google-progress"
+      aria-labelledby="google-progress-title"
+    >
+      <div class="order-progress-content">
+        <div class="order-progress-ring" aria-hidden="true">
+          <div class="order-progress-center">
+            <img
+              src="assets/marc-mark-small.png"
+              width="120"
+              height="113"
+              alt=""
+            />
+          </div>
+        </div>
+        <h2 id="google-progress-title" tabindex="-1" autofocus>
+          Opening Google sign-in
+        </h2>
+        <p>Taking you to Google to choose your account.</p>
       </div>
     </dialog>
   </body>

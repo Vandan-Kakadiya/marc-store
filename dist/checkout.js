@@ -21,6 +21,8 @@ const path = new URL(location.href);
 const fields = $('contact-form').elements,
   proof = $('proof-form').elements;
 const orderProgress = $('order-progress');
+const googleButton = $('google');
+const googleProgress = $('google-progress');
 const zones = ['login', 'contact', 'payment', 'receipt', 'orders'];
 const indiaTime = new Intl.DateTimeFormat('en-IN', {
   dateStyle: 'medium',
@@ -35,6 +37,7 @@ const ordersMode =
   path.searchParams.get('orders') === '1' || !draft?.items?.length;
 let loadCount = 0;
 let sessionTimer, sessionEndsAt;
+let googleLoaderTimer, googleRetryTimer;
 
 function show(zone) {
   for (const id of zones) $(id).hidden = id !== zone;
@@ -50,6 +53,32 @@ function showSignIn() {
     : 'Sign in to checkout';
   if (ordersMode)
     $('login-intro').textContent = 'Use the Google account you used to place your orders.';
+}
+function resetGoogleSignIn() {
+  if (googleRetryTimer === undefined) return;
+  clearTimeout(googleLoaderTimer);
+  clearTimeout(googleRetryTimer);
+  googleRetryTimer = undefined;
+  googleProgress.close();
+  googleButton.disabled = false;
+}
+function startGoogleSignIn() {
+  if (googleButton.disabled) return;
+  message();
+  googleButton.disabled = true;
+  googleLoaderTimer = setTimeout(() => googleProgress.showModal(), 150);
+  googleRetryTimer = setTimeout(() => {
+    resetGoogleSignIn();
+    message('Google sign-in is taking longer than expected. Try again.');
+    googleButton.focus();
+  }, 15000);
+  try {
+    location.assign('/api/auth/start' + (ordersMode ? '?orders=1' : ''));
+  } catch {
+    resetGoogleSignIn();
+    message('Could not open Google sign-in. Try again.');
+    googleButton.focus();
+  }
 }
 function expireSession(
   text = 'Your 20-minute session ended. Sign in with Google to continue.'
@@ -320,10 +349,11 @@ for (const role of affiliations) fields.affiliation.add(new Option(role, role));
 fields.affiliation.onchange = updateRoll;
 $('retry-checkout').onclick = boot;
 window.addEventListener('pageshow', checkSessionExpiry);
+window.addEventListener('pagehide', resetGoogleSignIn);
 document.addEventListener('visibilitychange', checkSessionExpiry);
 orderProgress.addEventListener('cancel', (event) => event.preventDefault());
-$('google').onclick = () =>
-  location.assign('/api/auth/start' + (ordersMode ? '?orders=1' : ''));
+googleProgress.addEventListener('cancel', (event) => event.preventDefault());
+googleButton.onclick = startGoogleSignIn;
 for (const id of ['switch-account', 'switch-order-account']) {
   $(id).onclick = async () => {
     try {
