@@ -10,11 +10,12 @@ import {
   liveCatalogue,
   money,
   node,
+  photo,
   picture,
   publishedCatalogue,
   read,
   save
-} from './market-core.js?v=7';
+} from './market-core.js?v=8';
 const published = publishedCatalogue();
 let catalog = published || cachedCatalogue(),
   bag = getBag(),
@@ -25,7 +26,7 @@ let catalog = published || cachedCatalogue(),
   selectedQuantity = 1,
   activeGroup = '',
   refreshTime = published ? Date.now() : 0;
-let toastTimer, activePhoto;
+let toastTimer, activePhoto, activeBanners;
 const groups = () =>
   Object.values(
     catalog.skus.reduce((all, row) => {
@@ -57,6 +58,7 @@ async function updateBag(reduce, reportError = toast) {
   }
 }
 function repaint() {
+  renderHomepageBanners();
   const all = groups(),
     names = [...new Set(catalog.skus.map((s) => s.name))],
     old = $('type').value;
@@ -167,45 +169,91 @@ function createGallery(photos) {
   gallery.setAttribute('role', 'group');
   gallery.setAttribute('aria-label', 'Product photos');
   const track = node('div', 'gallery-track');
+  track.append(...photos.map((row) => picture(row, 'detail-photo')));
+  gallery.append(track);
+  setupCarousel(gallery, track, 'photo');
+  return gallery;
+}
+function renderHomepageBanners() {
+  const carousel = $('home-banners');
+  if (!carousel) return;
+  const banners = Array.isArray(catalog.homepageBanners)
+    ? catalog.homepageBanners.filter((banner) =>
+        banner &&
+        typeof banner.image === 'string' &&
+        photo(banner) &&
+        typeof banner.title === 'string'
+      ).slice(0, 6)
+    : [];
+  const key = JSON.stringify(banners);
+  if (key === activeBanners) return;
+  activeBanners = key;
+  carousel.hidden = !banners.length;
+  if (!banners.length) {
+    carousel.replaceChildren();
+    return;
+  }
+
+  const track = node('div', 'gallery-track campaign-track');
+  banners.forEach((banner, index) => {
+    const link = node('a', 'campaign-slide');
+    link.href = typeof banner.href === 'string' && banner.href.startsWith('https://')
+      ? banner.href
+      : '#shop';
+    const frame = picture({ image: banner.image, name: banner.title }, 'campaign-photo');
+    const image = frame.querySelector('img');
+    if (image) {
+      image.alt = banner.title;
+      if (index === 0) {
+        image.loading = 'eager';
+        image.fetchPriority = 'high';
+      }
+    }
+    link.append(frame);
+    track.append(link);
+  });
+  carousel.replaceChildren(track);
+  setupCarousel(carousel, track, 'banner');
+}
+function setupCarousel(carousel, track, slideName) {
+  const slideCount = track.children.length;
+  if (slideCount < 2) return;
   track.tabIndex = 0;
   track.setAttribute('role', 'group');
-  track.setAttribute('aria-label', 'Swipe or use arrow keys to view photos');
-  track.append(...photos.map((row) => picture(row, 'detail-photo')));
+  track.setAttribute('aria-label', 'Swipe or use arrow keys to view ' + slideName + 's');
 
   const controls = node('div', 'gallery-controls');
-  const rotation = btn('', 'gallery-rotation', () => setPlaying(!playing));
-  const dots = photos.map((_, index) => {
+  const dots = Array.from(track.children, (_, index) => {
     const dot = btn('', 'gallery-dot', () => showPhoto(index));
-    dot.setAttribute('aria-label', 'Show photo ' + (index + 1) + ' of ' + photos.length);
+    dot.setAttribute('aria-label', 'Show ' + slideName + ' ' + (index + 1) + ' of ' + slideCount);
     return dot;
   });
-  let playing = !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-    pointerDown = false,
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let pointerDown = false,
     selectedDot = 0,
     timer;
 
   const current = () => Math.max(
     0,
-    Math.min(photos.length - 1, Math.round(track.scrollLeft / (track.clientWidth || 1)))
+    Math.min(slideCount - 1, Math.round(track.scrollLeft / (track.clientWidth || 1)))
   );
   function restartRotation() {
     clearTimeout(timer);
-    if (!playing || pointerDown) return;
+    if (reducedMotion || pointerDown) return;
     timer = setTimeout(() => {
-      if (!gallery.isConnected || !$('product').open) return;
-      if (document.hidden) {
+      const dialog = track.closest('dialog');
+      if (!track.isConnected || dialog?.open === false) return;
+      if (
+        document.hidden ||
+        carousel.querySelector(':focus-visible') ||
+        (!dialog && document.querySelector('dialog[open]'))
+      ) {
         restartRotation();
         return;
       }
-      const next = (current() + 1) % photos.length;
+      const next = (current() + 1) % slideCount;
       showPhoto(next, next === 0);
     }, 4000);
-  }
-  function setPlaying(value) {
-    playing = value;
-    rotation.dataset.playing = String(playing);
-    rotation.setAttribute('aria-label', playing ? 'Pause slideshow' : 'Play slideshow');
-    restartRotation();
   }
   function showPhoto(index, wrap = false) {
     track.scrollTo({
@@ -215,7 +263,7 @@ function createGallery(photos) {
     restartRotation();
   }
   dots[0].setAttribute('aria-current', 'true');
-  controls.append(rotation, ...dots);
+  controls.append(...dots);
   track.addEventListener(
     'scroll',
     () => {
@@ -240,19 +288,16 @@ function createGallery(photos) {
   track.addEventListener('pointerup', releasePointer);
   track.addEventListener('pointercancel', releasePointer);
   track.addEventListener('pointerleave', releasePointer);
-  gallery.addEventListener('focusin', (event) => {
-    if (event.target !== rotation && event.target.matches(':focus-visible'))
-      setPlaying(false);
-  });
-  gallery.addEventListener('keydown', (event) => {
+  function handleArrowKey(event) {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
     const step = event.key === 'ArrowLeft' ? -1 : 1;
-    showPhoto((current() + step + photos.length) % photos.length);
-  });
-  gallery.append(track, controls);
-  setPlaying(playing);
-  return gallery;
+    showPhoto((current() + step + slideCount) % slideCount);
+  }
+  track.addEventListener('keydown', handleArrowKey);
+  controls.addEventListener('keydown', handleArrowKey);
+  carousel.append(controls);
+  restartRotation();
 }
 function renderProductMedia(row, info) {
   const body = $('product-body');

@@ -204,6 +204,10 @@ summary:focus-visible {
   grid-template-columns: 0.92fr 1.08fr;
   min-height: clamp(420px, 40vw, 595px);
 }
+.hero-grid:has(.campaign[hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
 .hero-copy {
   padding: clamp(30px, 3.7vw, 64px) 20px clamp(35px, 4vw, 66px) 0;
   align-self: center;
@@ -305,83 +309,41 @@ h2,
   color: var(--navy);
 }
 .campaign {
-  isolation: isolate;
-  position: relative;
-  align-self: stretch;
+  align-self: center;
   overflow: hidden;
   margin: 20px 0 20px 8px;
   border: 1px solid #e4d9c6;
-  border-radius: 4px;
-  background: radial-gradient(ellipse at 26% 5%, #f8f4eb, #e6dfd2 82%);
+  border-radius: 6px;
+  background: #f5f1e8;
   box-shadow:
     3px 4px 0 #cdbda6,
-    6px 8px 0 #a5937b,
-    14px 22px 38px rgb(12 14 42 / 40%);
-  min-height: 320px;
+    10px 16px 28px rgb(12 14 42 / 32%);
 }
-.campaign:before {
-  content: '';
+.campaign-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  color: var(--deep);
+  text-decoration: none;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+.campaign-slide:focus-visible,
+.campaign-track:focus-visible {
+  outline-offset: -3px;
+}
+.campaign-photo {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+}
+.campaign-photo img {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    135deg,
-    transparent 0 69%,
-    #e0d8c8 69% 80%,
-    transparent 80%
-  );
-}
-.band {
-  position: absolute;
-  top: -6%;
-  bottom: -10%;
-  left: 49%;
-  width: 24%;
-  background: var(--orange);
-  transform: skewX(-24deg);
-}
-.campaign img {
-  position: absolute;
-  height: auto;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
-  filter: drop-shadow(8px 16px 12px rgb(54 36 29 / 25%));
-}
-.polo-front {
-  z-index: 2;
-  width: 53%;
-  max-height: 90%;
-  left: 5%;
-  top: 3%;
-  transform: rotate(-9deg);
-}
-.polo-back {
-  z-index: 1;
-  width: 48%;
-  max-height: 83%;
-  right: 3%;
-  top: 9%;
-  transform: rotate(11deg);
-}
-.campaign figcaption {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 10px 18px;
-  background: #f5f1e8;
-  border-top: 1px solid #d7cab7;
-  box-shadow: 0 -4px 12px rgb(62 44 28 / 10%);
-  color: var(--deep);
-  z-index: 3;
-  font-size: 12px;
-}
-.campaign figcaption span {
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  font-weight: 700;
 }
 .shop {
   padding: clamp(38px, 5vw, 76px) 0 clamp(48px, 6vw, 94px);
@@ -670,16 +632,15 @@ dialog::backdrop {
   scroll-snap-stop: always;
 }
 .gallery-controls {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 48px;
   color: var(--navy);
 }
-.gallery-controls button {
+.gallery-dot {
   display: grid;
   place-items: center;
+  width: 30px;
   min-height: 44px;
   padding: 0;
   border: 0;
@@ -687,9 +648,6 @@ dialog::backdrop {
   background: transparent;
   color: inherit;
   cursor: pointer;
-}
-.gallery-dot {
-  width: 30px;
 }
 .gallery-dot::before {
   content: '';
@@ -700,24 +658,6 @@ dialog::backdrop {
 }
 .gallery-dot[aria-current='true']::before {
   background: currentColor;
-}
-.gallery-rotation {
-  position: absolute;
-  top: 0;
-  right: 4px;
-  width: 36px;
-}
-.gallery-rotation::before {
-  content: '';
-  width: 8px;
-  height: 10px;
-  background: currentColor;
-  clip-path: polygon(0 0, 100% 50%, 0 100%);
-}
-.gallery-rotation[data-playing='true']::before {
-  border-inline: 2px solid currentColor;
-  background: transparent;
-  clip-path: none;
 }
 @media (prefers-reduced-motion: no-preference) {
   .gallery-track {
@@ -996,7 +936,6 @@ details summary {
 @media (min-width: 951px) {
   .campaign {
     margin: 30px 10px 30px 8px;
-    transform: perspective(1500px) rotateX(3deg) rotateY(-5deg);
   }
 }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
@@ -1020,15 +959,6 @@ details summary {
   }
   .hero-grid {
     min-height: 410px;
-  }
-  .campaign {
-    min-height: 280px;
-  }
-  .polo-front {
-    top: 12%;
-  }
-  .polo-back {
-    top: 20%;
   }
   .checkout-layout {
     grid-template-columns: 1.25fr 0.85fr;
@@ -1089,25 +1019,7 @@ details summary {
   }
   .campaign {
     width: 100%;
-    height: clamp(220px, 56vw, 330px);
-    min-height: 0;
     margin: 0 0 16px;
-  }
-  .polo-front {
-    top: 2%;
-    left: 7%;
-    width: 48%;
-    max-height: 95%;
-  }
-  .polo-back {
-    top: 5%;
-    right: 6%;
-    width: 43%;
-    max-height: 88%;
-  }
-  .campaign figcaption {
-    padding: 5px 10px;
-    font-size: 11px;
   }
   .grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

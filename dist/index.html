@@ -17,8 +17,8 @@
       type="font/woff2"
       crossorigin
     />
-    <link rel="modulepreload" href="market-core.js?v=7" />
-    <link rel="stylesheet" href="market.css?v=18" />
+    <link rel="modulepreload" href="market-core.js?v=8" />
+    <link rel="stylesheet" href="market.css?v=20" />
     <style>
       @font-face {
         font-family: "Barlow Condensed";
@@ -90,7 +90,7 @@
       }
     </style>
     <script id="catalogue-snapshot" type="application/json"></script>
-    <script type="module" src="market.js?v=12"></script>
+    <script type="module" src="market.js?v=14"></script>
   </head>
   <body class="store-home">
     <div id="store-loading" role="status" hidden>
@@ -164,37 +164,13 @@
             </p>
             <a class="action light" href="#shop">Shop merchandise</a>
           </div>
-          <figure class="campaign">
-            <div class="band" aria-hidden="true"></div>
-            <img
-              class="polo-back"
-              src="assets/polo-maroon-480.webp"
-              srcset="
-                assets/polo-maroon-480.webp  480w,
-                assets/polo-maroon.webp     1068w
-              "
-              sizes="(max-width:650px) 43vw, 25vw"
-              width="480"
-              height="662"
-              alt="Maroon polo from the MARC campaign"
-              decoding="async"
-            /><img
-              class="polo-front"
-              src="assets/polo-white-480.webp"
-              srcset="
-                assets/polo-white-480.webp  480w,
-                assets/polo-white.webp     1098w
-              "
-              sizes="(max-width:650px) 51vw, 31vw"
-              width="480"
-              height="626"
-              alt="White IIM Trichy polo"
-              fetchpriority="high"
-            />
-            <figcaption>
-              <b>The polo collection</b><span>MARC × UCB</span>
-            </figcaption>
-          </figure>
+          <div
+            id="home-banners"
+            class="campaign"
+            role="region"
+            aria-label="Homepage promotions"
+            hidden
+          ></div>
         </div>
       </section>
       <section class="wrap shop" id="shop" aria-labelledby="shop-title">

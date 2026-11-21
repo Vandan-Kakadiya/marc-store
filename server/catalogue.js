@@ -107,6 +107,19 @@ export function validateCatalogue(obj) {
     };
   });
   if (codes.size > 1000) throw Error('The catalogue has too many options.');
+  const homepageBanners = Array.isArray(obj.homepageBanners)
+    ? obj.homepageBanners
+        .filter((banner) =>
+          banner?.image &&
+          imageOK(banner.image) &&
+          typeof banner.title === 'string' &&
+          !!banner.title.trim() &&
+          banner.title.length <= 140 &&
+          (banner.href === '#shop' || publicImage(banner.href))
+        )
+        .slice(0, 6)
+        .map(({ image, title, href }) => ({ image, title, href }))
+    : [];
   const p = obj.payment;
   const payment =
     p &&
@@ -124,6 +137,7 @@ export function validateCatalogue(obj) {
     ...emptyCatalogue,
     ready: obj.ready,
     products,
+    ...(homepageBanners.length ? { homepageBanners } : {}),
     maxItems: obj.maxItems,
     version: obj.version,
     terms: obj.terms,

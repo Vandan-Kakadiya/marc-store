@@ -239,6 +239,7 @@ function saveCatalogue(data) {
   });
   const catalog = {
     skus,
+    homepageBanners: Array.isArray(data.homepageBanners) ? data.homepageBanners : [],
     open: data.ready === true,
     version: data.version,
     limit: data.maxItems,
