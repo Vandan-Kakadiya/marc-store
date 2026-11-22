@@ -24,5 +24,57 @@
         "width": 960
       }
     ]
+  },
+  "assets/MARC-page-2.webp": {
+    "sha256": "79f2b58dfb9f0a288b2967d2584e5bdcb65cdaa891427d216599288f0b4af406",
+    "variants": [
+      {
+        "src": "assets/optimized/ab0e5569669b122fa9e6-768.webp",
+        "width": 768
+      },
+      {
+        "src": "assets/optimized/75a4b992099d8f4ff5d3-1536.webp",
+        "width": 1536
+      }
+    ]
+  },
+  "assets/MARC-page-3.webp": {
+    "sha256": "91213120faa64a3f70cb50b93fb30321d4b0cb2a271912c32daa5e02834af57f",
+    "variants": [
+      {
+        "src": "assets/optimized/03ede26e89728ef8537e-768.webp",
+        "width": 768
+      },
+      {
+        "src": "assets/optimized/6dadb271c5938cdfcdae-1536.webp",
+        "width": 1536
+      }
+    ]
+  },
+  "assets/MARC-page-4.webp": {
+    "sha256": "efb47efe5d16b0787ed3e139b3458ae07ecb4440aab4ba28584bebb0beafdb13",
+    "variants": [
+      {
+        "src": "assets/optimized/0eb9d8a76947ed13061a-768.webp",
+        "width": 768
+      },
+      {
+        "src": "assets/optimized/20082396214e9fa0b3de-1536.webp",
+        "width": 1536
+      }
+    ]
+  },
+  "assets/MARC-page-5.webp": {
+    "sha256": "a8e3d48856b9d531629f99043a0663244f134b50e47e5f0f54025eecd2aee069",
+    "variants": [
+      {
+        "src": "assets/optimized/503bc2c955bc99d29b02-768.webp",
+        "width": 768
+      },
+      {
+        "src": "assets/optimized/a35b995b0c4e98408dc5-1536.webp",
+        "width": 1536
+      }
+    ]
   }
 }

@@ -108,6 +108,11 @@ export function photo(row, small = true) {
     return '';
   }
 }
+const imageSizes = {
+  'detail-photo': '(max-width: 680px) 88vw, 480px',
+  'campaign-photo': '(max-width: 680px) 92vw, (max-width: 1568px) 50vw, 770px',
+  thumb: '64px'
+};
 export function picture(row, cls) {
   const frame = node('div', cls),
     src = photo(row);
@@ -124,12 +129,8 @@ export function picture(row, cls) {
   im.decoding = 'async';
   const variants = row.imageVariants;
   if (variants?.length) {
-    im.sizes =
-      cls === 'detail-photo'
-        ? '(max-width: 680px) 88vw, 480px'
-        : cls === 'thumb'
-          ? '64px'
-          : '(max-width: 680px) 36vw, (max-width: 950px) 24vw, 260px';
+    im.sizes = imageSizes[cls] ||
+      '(max-width: 680px) 36vw, (max-width: 950px) 24vw, 260px';
     im.srcset = variants
       .map(({ src, width }) => src + ' ' + width + 'w')
       .join(', ');
@@ -210,17 +211,21 @@ export const post = (action, data = {}) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(data)
   });
+function validImageVariants(variants) {
+  return Array.isArray(variants)
+    ? variants.filter((variant) =>
+        [480, 768, 960, 1536].includes(variant?.width) &&
+        typeof variant.src === 'string' &&
+        /^assets\/optimized\/[a-f0-9]{20}-(480|768|960|1536)\.webp$/.test(variant.src) &&
+        variant.src.endsWith('-' + variant.width + '.webp')
+      )
+    : [];
+}
 function saveCatalogue(data) {
   if (data?.apiVersion !== 3 || !Array.isArray(data.products))
     throw Error('The published catalogue is unavailable.');
   const skus = data.products.flatMap((p) => {
-    const imageVariants = Array.isArray(p.imageVariants)
-      ? p.imageVariants.filter((variant) =>
-          [480, 960].includes(variant?.width) &&
-          typeof variant.src === 'string' &&
-          /^assets\/optimized\/[a-f0-9]{20}-(480|960)\.webp$/.test(variant.src)
-        )
-      : [];
+    const imageVariants = validImageVariants(p.imageVariants);
     const extraImages = Array.isArray(p.extraImages)
       ? [...new Set(p.extraImages.filter(
           (src) => typeof src === 'string' && src !== p.image && photo({ image: src })
@@ -239,7 +244,12 @@ function saveCatalogue(data) {
   });
   const catalog = {
     skus,
-    homepageBanners: Array.isArray(data.homepageBanners) ? data.homepageBanners : [],
+    homepageBanners: Array.isArray(data.homepageBanners)
+      ? data.homepageBanners.map((banner) => ({
+          ...banner,
+          imageVariants: validImageVariants(banner?.imageVariants)
+        }))
+      : [],
     open: data.ready === true,
     version: data.version,
     limit: data.maxItems,

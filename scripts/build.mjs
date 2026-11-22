@@ -11,24 +11,24 @@ const manifest = JSON.parse(
 );
 const site = siteURL(process.env.MARC_SITE_URL);
 
-async function addImageVariants(product) {
+async function addImageVariants(row) {
   const image =
-    site && product.image.startsWith(site + '/')
-      ? product.image.slice(site.length + 1)
-      : product.image;
+    site && row.image.startsWith(site + '/')
+      ? row.image.slice(site.length + 1)
+      : row.image;
   const entry = manifest[image];
-  if (!entry) return product;
+  if (!entry) return row;
   try {
     const original = await readFile(new URL(image, output));
     // A replaced photo should use its new original until its variants are rebuilt.
     if (createHash('sha256').update(original).digest('hex') !== entry.sha256)
-      return product;
+      return row;
     await Promise.all(
       entry.variants.map(({ src }) => access(new URL(src, output)))
     );
-    return { ...product, imageVariants: entry.variants };
+    return { ...row, imageVariants: entry.variants };
   } catch {
-    return product;
+    return row;
   }
 }
 
@@ -45,6 +45,8 @@ await saveDriveProductPhotos(
   (photo) => callScript(process.env, 'productPhoto', photo)
 );
 snapshot.products = await Promise.all(snapshot.products.map(addImageVariants));
+if (snapshot.homepageBanners)
+  snapshot.homepageBanners = await Promise.all(snapshot.homepageBanners.map(addImageVariants));
 const json = JSON.stringify(snapshot);
 const index = new URL('index.html', output);
 const html = await readFile(index, 'utf8');

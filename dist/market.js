@@ -15,7 +15,7 @@ import {
   publishedCatalogue,
   read,
   save
-} from './market-core.js?v=8';
+} from './market-core.js?v=9';
 const published = publishedCatalogue();
 let catalog = published || cachedCatalogue(),
   bag = getBag(),
@@ -200,7 +200,7 @@ function renderHomepageBanners() {
     link.href = typeof banner.href === 'string' && banner.href.startsWith('https://')
       ? banner.href
       : '#shop';
-    const frame = picture({ image: banner.image, name: banner.title }, 'campaign-photo');
+    const frame = picture({ ...banner, name: banner.title }, 'campaign-photo');
     const image = frame.querySelector('img');
     if (image) {
       image.alt = banner.title;

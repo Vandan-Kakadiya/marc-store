@@ -1,5 +1,6 @@
 /** MARC server-to-server receiver. Copy this file into a standalone Apps Script project. */
 var ORDER_TAB = 'MARC Website Orders';
+var PAYMENT_SCREENSHOT_HEADER = 'Payment screenshot';
 var HEADINGS = [
   'Order ID',
   'Submitted (UTC)',
@@ -12,15 +13,19 @@ var HEADINGS = [
   'Items',
   'Total INR',
   'UPI transaction ID',
-  'Private screenshot',
+  PAYMENT_SCREENSHOT_HEADER,
   'Submission fingerprint'
 ];
 var ORDER_NUMBER_HEADER = 'MARC Order Number';
 var SNAPSHOT_HEADER = 'MARC Receipt Snapshot';
+var PAID_WITH_HEADER = 'Paid with';
+var BANK_TRANSFER = 'Bank transfer (NEFT / IMPS / RTGS)';
+var PAYMENT_METHODS = ['GPay', 'PhonePe', 'Paytm', 'CRED', BANK_TRANSFER, 'Others'];
 var ORDER_ID_PATTERN =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 var FORMATS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 var PROOF_LIMIT = 4 * 1024 * 1024;
+var PRODUCT_PHOTO_LIMIT = 4 * 1024 * 1024;
 
 function properties_() {
   return PropertiesService.getScriptProperties().getProperties();
@@ -93,6 +98,8 @@ function doPost(event) {
       return output_(listOrders_(props, request.data));
     if (request.action === 'catalogue')
       return output_({ ok: true, data: catalogue_(props) });
+    if (request.action === 'productPhoto')
+      return output_({ ok: true, data: readProductPhoto_(props, request.data) });
     return output_({ ok: false, code: 'unknown_action' });
   } catch (error) {
     // Egress failures can be retried by order reference. No contact or payment data is logged.
@@ -125,10 +132,15 @@ function orderBook_(p) {
 function orderColumns_(tab) {
   var lastColumn = Math.max(HEADINGS.length, tab.getLastColumn());
   var headers = tab.getRange(1, 1, 1, lastColumn).getDisplayValues()[0];
+  var screenshotIndex = HEADINGS.indexOf(PAYMENT_SCREENSHOT_HEADER);
+  var renameScreenshot = headers[screenshotIndex] === 'Private screenshot';
+  if (renameScreenshot) headers[screenshotIndex] = PAYMENT_SCREENSHOT_HEADER;
   if (headers.slice(0, HEADINGS.length).join('|') !== HEADINGS.join('|'))
     setupError_('Restore the original headers in ' + ORDER_TAB + '.');
-  var changed = false;
-  var columns = [ORDER_NUMBER_HEADER, SNAPSHOT_HEADER].map(function (heading) {
+  if (renameScreenshot)
+    tab.getRange(1, screenshotIndex + 1).setValues([[PAYMENT_SCREENSHOT_HEADER]]);
+  var changed = renameScreenshot;
+  var columns = [ORDER_NUMBER_HEADER, SNAPSHOT_HEADER, PAID_WITH_HEADER].map(function (heading) {
     var existing = headers.indexOf(heading, HEADINGS.length) + 1;
     if (existing) return existing;
     var column = ++lastColumn;
@@ -139,7 +151,7 @@ function orderColumns_(tab) {
     return column;
   });
   if (changed) SpreadsheetApp.flush();
-  return { number: columns[0], snapshot: columns[1] };
+  return { number: columns[0], snapshot: columns[1], paidWith: columns[2] };
 }
 function openStorage_(p) {
   if (!p.SCREENSHOT_FOLDER_ID) setupError_('Set SCREENSHOT_FOLDER_ID.');
@@ -223,10 +235,16 @@ function orderRow_(o, fingerprint, date, link) {
   ];
 }
 function proof_(o) {
+  var paidWith = (o && o.paidWith) || '';
+  var referencePattern = paidWith === BANK_TRANSFER
+    ? /^[A-Z0-9]{6,40}$/
+    : /^[0-9]{12}$/;
   if (
     !o ||
     !ORDER_ID_PATTERN.test(o.id || '') ||
-    !/^\d{12}$/.test(o.utr || '') ||
+    typeof o.utr !== 'string' ||
+    !referencePattern.test(o.utr) ||
+    (paidWith && !PAYMENT_METHODS.includes(paidWith)) ||
     !o.contact ||
     !o.buyer ||
     !Array.isArray(o.lines) ||
@@ -243,23 +261,21 @@ function proof_(o) {
   if (!bytes.length || bytes.length > PROOF_LIMIT)
     throw Error('Invalid screenshot.');
   var hash = digest_(bytes);
-  var fingerprint = digest_(
-    JSON.stringify([
-      o.id,
-      o.buyer,
-      o.contact,
-      o.lines,
-      o.total,
-      o.payee,
-      o.utr,
-      o.proof.mime,
-      hash
-    ])
-  );
+  var submission = [
+    o.id, o.buyer, o.contact, o.lines, o.total, o.payee, o.utr, o.proof.mime, hash
+  ];
+  var earlierSubmission = '';
+  if (paidWith) {
+    // The earlier receiver accepted the same order without recording its payment method.
+    earlierSubmission = JSON.stringify(submission);
+    submission.push(paidWith);
+  }
+  var fingerprint = digest_(JSON.stringify(submission));
   return {
     bytes: bytes,
     hash: hash,
     fingerprint: fingerprint,
+    earlierSubmission: earlierSubmission,
     mime: o.proof.mime
   };
 }
@@ -290,7 +306,7 @@ function driveCopy_(folder, o, evidence) {
   return file.getUrl();
 }
 function orderGroup_(affiliation, roll) {
-  if (/^[0-9]{6}$/.test(String(roll))) return String(roll);
+  if (/^[0-9]{6,7}$/.test(String(roll))) return String(roll);
   return affiliation === 'Staff' ? 'STAFF' : 'OTHER';
 }
 function buyerKey_(buyer) {
@@ -302,12 +318,6 @@ function orderSnapshot_(key, lines) {
     ? snapshot
     : JSON.stringify({ key: key, lines: [] });
 }
-function orderRows_(tab, columns) {
-  var count = tab.getLastRow() - 1;
-  return count > 0
-    ? tab.getRange(2, 1, count, Math.max(columns.number, columns.snapshot)).getValues()
-    : [];
-}
 function savedOrder_(row) {
   return ORDER_ID_PATTERN.test(row[0]) && row[1] && row[11];
 }
@@ -315,7 +325,9 @@ function nextOrderNumber_(tab, columns, contact) {
   var group = orderGroup_(contact.affiliation, contact.roll);
   var prefix = 'MARC_' + group + '_';
   var count = 0, highest = 0;
-  orderRows_(tab, columns).forEach(function (row) {
+  // The order number is allocated after the new order's provisional row exists.
+  var rows = tab.getRange(2, 1, tab.getLastRow() - 1, columns.number).getValues();
+  rows.forEach(function (row) {
     if (!savedOrder_(row)) return;
     if (orderGroup_(row[6], row[7]) === group) count++;
     var number = row[columns.number - 1];
@@ -325,6 +337,40 @@ function nextOrderNumber_(tab, columns, contact) {
     }
   });
   return prefix + (Math.max(count, highest) + 1);
+}
+function receiptRows_(tab, columns, key, email, proven) {
+  var count = tab.getLastRow() - 1;
+  if (count < 1) return [];
+  var blocks = [[2, count]];
+  if (count > 100) {
+    // A snapshot stores the Google account digest as literal JSON text.
+    var candidates = new Set(tab.getRange(2, columns.snapshot, count, 1)
+      .createTextFinder(key).findAll().map(function (cell) { return cell.getRow(); }));
+    if (email)
+      tab.getRange(2, 5, count, 1).getValues().forEach(function (row, index) {
+        if (String(row[0]).trim().toLowerCase() === email) candidates.add(index + 2);
+      });
+    if (proven.size)
+      tab.getRange(2, 1, count, 1).getValues().forEach(function (row, index) {
+        if (proven.has(row[0])) candidates.add(index + 2);
+      });
+    var sorted = Array.from(candidates).sort(function (a, b) { return a - b; });
+    blocks = [];
+    sorted.forEach(function (row) {
+      var last = blocks[blocks.length - 1];
+      if (last && last[0] + last[1] === row) last[1]++;
+      else blocks.push([row, 1]);
+    });
+    // Coalesce widely scattered matches to bound spreadsheet service calls.
+    if (blocks.length > 8)
+      blocks = [[sorted[0], sorted[sorted.length - 1] - sorted[0] + 1]];
+  }
+  var width = Math.max(columns.number, columns.snapshot);
+  return blocks.flatMap(function (block) {
+    return tab.getRange(block[0], 1, block[1], width).getValues().map(function (values, index) {
+      return { row: block[0] + index, values: values };
+    });
+  });
 }
 function listOrders_(p, identity) {
   if (!identity || typeof identity.buyer !== 'string' || !identity.buyer)
@@ -339,7 +385,8 @@ function listOrders_(p, identity) {
     var email = String(identity.email || '').trim().toLowerCase();
     var proven = new Set(Array.isArray(identity.orderIds) ? identity.orderIds : []);
     var orders = [], migrated = false;
-    orderRows_(tab, columns).forEach(function (row, index) {
+    receiptRows_(tab, columns, key, email, proven).forEach(function (entry) {
+      var row = entry.values;
       if (!savedOrder_(row)) return;
       var when = row[1] instanceof Date ? row[1].getTime() : Date.parse(row[1]);
       var total = Math.round(Number(row[9]) * 100);
@@ -360,7 +407,7 @@ function listOrders_(p, identity) {
         var matchingEmail = email && String(row[4]).trim().toLowerCase() === email;
         if (!proven.has(row[0]) && !matchingEmail)
           return;
-        tab.getRange(index + 2, columns.snapshot).setValues([[orderSnapshot_(key, [])]]);
+        tab.getRange(entry.row, columns.snapshot).setValues([[orderSnapshot_(key, [])]]);
         migrated = true;
       }
       orders.push({
@@ -401,7 +448,10 @@ function saveOrder_(p, o) {
       var previous = tab
         .getRange(row, 1, 1, HEADINGS.length)
         .getDisplayValues()[0];
-      if (previous[12] !== evidence.fingerprint)
+      if (
+        previous[12] !== evidence.fingerprint &&
+        (!evidence.earlierSubmission || previous[12] !== digest_(evidence.earlierSubmission))
+      )
         return { ok: false, code: 'retry_different' };
       if (previous[1] && previous[11]) {
         var previousNumber = tab.getRange(row, columns.number).getDisplayValues()[0][0];
@@ -415,6 +465,8 @@ function saveOrder_(p, o) {
       )
         return { ok: false, code: 'reference_in_use' };
       row = tab.getLastRow() + 1;
+      var maxRows = tab.getMaxRows();
+      if (row > maxRows) tab.insertRowsAfter(maxRows, 100);
       tab.getRange(row, 2).setNumberFormat('@');
       tab.getRange(row, 11).setNumberFormat('@');
       tab
@@ -431,11 +483,12 @@ function saveOrder_(p, o) {
     var snapshot = orderSnapshot_(buyerKey_(o.buyer), o.lines);
     tab.getRange(row, columns.number).setValues([[number]]);
     tab.getRange(row, columns.snapshot).setValues([[snapshot]]);
+    if (o.paidWith) tab.getRange(row, columns.paidWith).setValues([[textCell_(o.paidWith)]]);
     var cells = tab.getRange(row, 1, 1, HEADINGS.length);
     cells.setValues([orderRow_(o, evidence.fingerprint, when, link)]);
     SpreadsheetApp.flush();
     var saved = tab
-      .getRange(row, 1, 1, Math.max(columns.number, columns.snapshot))
+      .getRange(row, 1, 1, Math.max(columns.number, columns.snapshot, columns.paidWith))
       .getDisplayValues()[0];
     if (
       saved[0] !== o.id ||
@@ -443,7 +496,8 @@ function saveOrder_(p, o) {
       saved[11] !== link ||
       saved[12] !== evidence.fingerprint ||
       saved[columns.number - 1] !== number ||
-      saved[columns.snapshot - 1] !== snapshot
+      saved[columns.snapshot - 1] !== snapshot ||
+      (o.paidWith && saved[columns.paidWith - 1] !== o.paidWith)
     )
       throw Error('The order row could not be confirmed.');
     return savedReceipt_(o.id, saved, number);
@@ -452,7 +506,7 @@ function saveOrder_(p, o) {
   }
 }
 
-function taggedItem_(form, type, tag, title, asTyped) {
+function taggedItem_(form, type, tag, title, asTyped, optional) {
   var items = form.getItems(type).map(asTyped);
   var tagged = items.filter(function (item) {
     return (item.getHelpText() || '')
@@ -464,12 +518,17 @@ function taggedItem_(form, type, tag, title, asTyped) {
     : items.filter(function (item) {
         return item.getTitle().trim().toLowerCase() === title;
       });
+  if (optional && !found.length) return null;
   if (found.length !== 1)
     throw Error('Check the ' + title + ' question and its type.');
   return found[0];
 }
 function localImage_(raw) {
   if (!raw) return '';
+  var drive = raw.match(
+    /^https:\/\/drive\.google\.com\/file\/d\/([A-Za-z0-9_-]{10,128})(?:\/view)?\/?(?:[?#][^\s]*)?$/
+  );
+  if (drive) return 'drive:' + drive[1];
   if (safeHTTPS_(raw)) return raw;
   var decoded = decodeURIComponent(raw.replace(/^\.\//, ''));
   if (
@@ -478,7 +537,7 @@ function localImage_(raw) {
       return !part || part === '.' || part === '..';
     })
   )
-    throw Error('Use an assets/ path or a direct HTTPS image URL.');
+    throw Error('Use an assets/ path, a direct HTTPS image URL, or a Google Drive file link.');
   return decoded.split('/').map(encodeURIComponent).join('/');
 }
 function safeHTTPS_(v) {
@@ -488,6 +547,51 @@ function safeHTTPS_(v) {
     /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/[^\s<>"]+$/.test(v)
   );
 }
+function homepageBanners_(form) {
+  var choices;
+  try {
+    var question = taggedItem_(
+      form,
+      FormApp.ItemType.CHECKBOX,
+      'banners',
+      'homepage banners',
+      function (item) { return item.asCheckboxItem(); },
+      true
+    );
+    if (!question) return [];
+    choices = question.getChoices();
+  } catch (error) {
+    console.warn('Could not read Homepage banners. ' + error.message);
+    return [];
+  }
+
+  var banners = [], usedImages = new Set();
+  for (var i = 0; i < choices.length && banners.length < 6; i++) {
+    try {
+      var fields = choices[i].getValue().split('|').map(function (field) {
+        return field.trim();
+      });
+      var image = localImage_(fields[0]),
+        title = fields[1] || 'MARC Store promotion',
+        href = fields[2] || '#shop';
+      if (
+        fields.length > 3 ||
+        !image ||
+        image.startsWith('drive:') ||
+        title.length > 140 ||
+        /[\x00-\x1f\x7f]/.test(title) ||
+        (href !== '#shop' && !safeHTTPS_(href))
+      )
+        throw Error('Use a deployed image URL, label and shop link.');
+      if (usedImages.has(image)) continue;
+      usedImages.add(image);
+      banners.push({ image: image, title: title, href: href });
+    } catch (error) {
+      console.warn('Check Homepage banners option ' + (i + 1) + '.');
+    }
+  }
+  return banners;
+}
 function parseSku_(line) {
   var fields = String(line)
     .split('|')
@@ -496,7 +600,7 @@ function parseSku_(line) {
     });
   if (
     fields.length < 5 ||
-    fields.length > 6 ||
+    fields.length > 8 ||
     !/^[A-Za-z0-9_-]{1,64}$/.test(fields[0]) ||
     !fields[1] ||
     fields[1].length > 140 ||
@@ -510,16 +614,16 @@ function parseSku_(line) {
     Number(fields[4]) > 1000000
   )
     throw Error(
-      'Check the SKU format and price for ' +
+      'Check the SKU format, price and limit of three photos for ' +
         (fields[0] || 'the empty option') +
         '.'
     );
   var price = fields[4].split('.');
-  var image = localImage_(fields[5] || '');
-  if (!image && /\bpolos?\b/i.test(fields[1])) {
-    if (/^white$/i.test(fields[2])) image = 'assets/polo-white.png';
+  var images = Array.from(new Set(fields.slice(5).filter(Boolean).map(localImage_)));
+  if (!images.length && /\bpolos?\b/i.test(fields[1])) {
+    if (/^white$/i.test(fields[2])) images.push('assets/polo-white.png');
     if (/^(maroon|burgundy)$/i.test(fields[2]))
-      image = 'assets/polo-maroon.png';
+      images.push('assets/polo-maroon.png');
   }
   return {
     sku: fields[0],
@@ -528,7 +632,7 @@ function parseSku_(line) {
     size: fields[3],
     paise:
       Number(price[0]) * 100 + Number(((price[1] || '') + '00').slice(0, 2)),
-    image: image
+    images: images
   };
 }
 function products_(rows) {
@@ -548,24 +652,115 @@ function products_(rows) {
       throw Error('Duplicate SKU or size: ' + row.sku);
     codes.add(row.sku);
     sizes.add(size);
-    var product = groups.get(group);
-    if (!product) {
-      product = {
-        id: digest_(group).slice(0, 24),
-        name: row.name,
-        colour: row.colour,
-        image: row.image,
-        skus: []
-      };
-      groups.set(group, product);
-    }
-    if (product.image !== row.image)
-      throw Error('Use one photo for each product and colour.');
-    product.skus.push({ sku: row.sku, size: row.size, paise: row.paise });
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(row);
   });
   if (groups.size > 500)
     throw Error('The catalogue has too many product groups.');
-  return Array.from(groups.values());
+  return Array.from(groups.entries()).map(function (entry) {
+    var group = entry[0],
+      options = entry[1],
+      first = options[0];
+    var galleries = options.filter(function (row) {
+      return row.images.length > 1;
+    });
+    // One size can supply the photo list for the whole product colour.
+    var photoRows = galleries.length ? galleries : options;
+    var images = photoRows[0].images;
+    if (photoRows.some(function (row) {
+      return row.images.join('|') !== images.join('|');
+    }))
+      throw Error('Use the same photo list for ' + first.name + ' (' + first.colour + ').');
+    var product = {
+      id: digest_(group).slice(0, 24),
+      name: first.name,
+      colour: first.colour,
+      image: images[0] || '',
+      skus: options.map(function (row) {
+        return { sku: row.sku, size: row.size, paise: row.paise };
+      })
+    };
+    if (images.length > 1) product.extraImages = images.slice(1);
+    return product;
+  });
+}
+function productPhoto_(p, id) {
+  var folderId = p.PRODUCT_PHOTOS_FOLDER_ID;
+  if (
+    !folderId ||
+    folderId === p.SCREENSHOT_FOLDER_ID ||
+    typeof id !== 'string' ||
+    !/^[A-Za-z0-9_-]{10,128}$/.test(id)
+  )
+    setupError_('Set PRODUCT_PHOTOS_FOLDER_ID to the separate product photos folder.');
+  var file = DriveApp.getFileById(id);
+  var parents = file.getParents();
+  var inFolder = false;
+  while (parents.hasNext()) {
+    if (parents.next().getId() === folderId) {
+      inFolder = true;
+      break;
+    }
+  }
+  if (!inFolder || file.isTrashed())
+    setupError_('Keep the photo in the product photos folder.');
+  var mime = file.getMimeType(),
+    size = file.getSize();
+  if (!FORMATS[mime] || size < 1 || size > PRODUCT_PHOTO_LIMIT)
+    setupError_('Use a JPG, PNG or WebP product photo up to 4 MB.');
+  return {
+    file: file,
+    mime: mime,
+    size: size,
+    revision: file.getLastUpdated().getTime()
+  };
+}
+function readProductPhoto_(p, data) {
+  if (!data || !Number.isSafeInteger(data.revision))
+    setupError_('Provide a valid product photo revision.');
+  var photo = productPhoto_(p, data.id);
+  if (photo.revision !== data.revision)
+    setupError_('The product photo changed. Rebuild the catalogue.');
+  var bytes = photo.file.getBlob().getBytes();
+  if (
+    bytes.length !== photo.size ||
+    photo.file.getLastUpdated().getTime() !== photo.revision
+  )
+    setupError_('The product photo changed. Rebuild the catalogue.');
+  return { mime: photo.mime, content: Utilities.base64Encode(bytes) };
+}
+function resolveProductPhotos_(products, p) {
+  var drive = new Map();
+  products.forEach(function (product) {
+    var photos = [product.image].concat(product.extraImages || []).map(function (src) {
+      if (!src.startsWith('drive:')) return src;
+      var id = src.slice(6);
+      if (!drive.has(id)) {
+        try {
+          var photo = productPhoto_(p, id);
+          var hash = digest_(id + ':' + photo.revision).slice(0, 24);
+          drive.set(id, {
+            id: id,
+            revision: photo.revision,
+            src: 'assets/catalogue/' + hash + '.' + FORMATS[photo.mime]
+          });
+        } catch (error) {
+          console.warn(
+            'Skipped a Drive photo for ' + product.name + ' (' + product.colour +
+            '). Check the product photos folder and the photo link, format and size.'
+          );
+          drive.set(id, null);
+        }
+      }
+      var asset = drive.get(id);
+      return asset ? asset.src : '';
+    }).filter(Boolean);
+    photos = Array.from(new Set(photos));
+    product.image = photos[0] || '';
+    if (photos.length > 1) product.extraImages = photos.slice(1);
+    else delete product.extraImages;
+  });
+  return Array.from(drive.values()).filter(Boolean);
 }
 function catalogue_(p) {
   if (!p.FORM_ID) setupError_('Set FORM_ID to the existing Google Form.');
@@ -606,6 +801,8 @@ function catalogue_(p) {
     )
       throw Error('Use quantity choices 1, 2, 3 and so on.');
     draft.products = products_(choices);
+    var photoAssets = resolveProductPhotos_(draft.products, p);
+    if (photoAssets.length) draft.photoAssets = photoAssets;
     draft.maxItems = limits.length;
     draft.terms = (form.getDescription() || '').slice(0, 12000);
     var published =
@@ -625,6 +822,8 @@ function catalogue_(p) {
   } catch (error) {
     console.warn('Catalogue paused. ' + error.message);
   }
+  var homepageBanners = homepageBanners_(form);
+  if (homepageBanners.length) draft.homepageBanners = homepageBanners;
   draft.version = digest_(JSON.stringify(draft));
   return draft;
 }
