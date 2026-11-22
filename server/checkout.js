@@ -16,6 +16,7 @@ import {
 import { loginReady, getUser, logout } from './auth.js';
 import { callScript, scriptEndpoint } from './script-client.js';
 import { validateCatalogue } from './catalogue.js';
+import { upiOrder, upiQr } from './upi.js';
 
 const groups = [
   'PGPM 2026-28',
@@ -58,21 +59,24 @@ function contactInfo(data, buyer) {
   };
 }
 function printDetails(item, fields) {
-  if (!fields.length) return;
+  if (!fields.length || item.print === undefined) return;
   if (!Array.isArray(item.print) || item.print.length !== item.qty)
-    fail(400, 'Enter the print details for each customised item.');
-  return item.print.map((entry) => {
+    fail(400, 'Check that the print details match the quantity.');
+  const units = item.print.map((entry) => {
     const unit = {};
-    if (fields.includes('name'))
-      unit.name = requiredText(entry?.name, 80, 'the name to print');
-    if (fields.includes('number')) {
-      const number = entry?.number;
+    const name = entry?.name;
+    if (fields.includes('name') && name !== undefined &&
+        (typeof name !== 'string' || name.trim()))
+      unit.name = requiredText(name, 80, 'the name to print');
+    const number = entry?.number;
+    if (fields.includes('number') && number !== undefined && number !== '') {
       if (typeof number !== 'string' || !/^[0-9]{1,4}$/.test(number))
         fail(400, 'Enter a number to print from 0 to 9999.');
       unit.number = number;
     }
     return unit;
   });
+  if (units.some((unit) => unit.name || unit.number)) return units;
 }
 function lineItems(catalogue, input) {
   if (
@@ -131,22 +135,27 @@ async function getCatalogue(origin, fetcher) {
   if (!response.ok) fail(503, 'The catalogue is temporarily unavailable.');
   return validateCatalogue(await response.json());
 }
-function paymentForQuote(payment, env) {
+function paymentForQuote(payment, quote, env) {
+  const upi = upiOrder(payment, quote, env.MARC_SESSION_KEY);
   const accountNumber = (env.MARC_BANK_ACCOUNT_NUMBER || '').trim();
   const ifsc = (env.MARC_BANK_IFSC || '').trim().toUpperCase();
   if (
     !/^[0-9]{6,34}$/.test(accountNumber) ||
     !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)
   )
-    return payment;
-  return { ...payment, bank: { accountNumber, ifsc } };
+    return { ...payment, ...upi };
+  return { ...payment, ...upi, bank: { accountNumber, ifsc } };
 }
 function quoteView(quote) {
+  const { payment } = quote;
   return {
     id: quote.id,
     total: quote.total,
     lines: quote.lines,
-    payment: quote.payment,
+    payment: {
+      ...payment,
+      ...(payment.upiLink ? { orderQr: upiQr(payment.upiLink) } : {})
+    },
     terms: quote.terms
   };
 }
@@ -225,6 +234,9 @@ async function submit(req, env, buyer, fetcher) {
     payee: quote.payment.payee,
     utr,
     ...(paidWith ? { paidWith } : {}),
+    ...(quote.payment.upiReference && paidWith !== bankTransfer
+      ? { upiReference: quote.payment.upiReference }
+      : {}),
     proof: { mime: proof.type, base64: bytes.toString('base64') }
   };
   let result;
@@ -372,15 +384,18 @@ export function createCheckout({ env, fetcher = fetch }) {
             );
           const contact = contactInfo(body.contact, buyer),
             lines = lineItems(catalogue, body.items);
-          const quote = {
+          const order = {
             id: body.id,
             buyer: buyer.sub,
+            total: lines.reduce((n, r) => n + r.qty * r.paise, 0)
+          };
+          const quote = {
+            ...order,
             contact,
             lines,
-            total: lines.reduce((n, r) => n + r.qty * r.paise, 0),
             terms: catalogue.terms,
-            payment: paymentForQuote(catalogue.payment, env),
-            requiresPaidWith: body.paidWithSelection === true,
+            payment: paymentForQuote(catalogue.payment, order, env),
+            requiresPaidWith: true,
             expires: Date.now() + 7 * 86400000
           };
           const token = seal(quote, quotePurpose, env.MARC_SESSION_KEY);

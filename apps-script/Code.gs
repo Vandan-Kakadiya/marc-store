@@ -19,6 +19,9 @@ var HEADINGS = [
 var ORDER_NUMBER_HEADER = 'MARC Order Number';
 var SNAPSHOT_HEADER = 'MARC Receipt Snapshot';
 var PAID_WITH_HEADER = 'Paid with';
+var UPI_REFERENCE_HEADER = 'UPI order reference';
+var PRINT_NAME_HEADER = 'Name to print (optional)';
+var PRINT_NUMBER_HEADER = 'Number to print (optional)';
 var BANK_TRANSFER = 'Bank transfer (NEFT / IMPS / RTGS)';
 var PAYMENT_METHODS = ['GPay', 'PhonePe', 'Paytm', 'CRED', BANK_TRANSFER, 'Others'];
 var ORDER_ID_PATTERN =
@@ -140,18 +143,31 @@ function orderColumns_(tab) {
   if (renameScreenshot)
     tab.getRange(1, screenshotIndex + 1).setValues([[PAYMENT_SCREENSHOT_HEADER]]);
   var changed = renameScreenshot;
-  var columns = [ORDER_NUMBER_HEADER, SNAPSHOT_HEADER, PAID_WITH_HEADER].map(function (heading) {
+  var columns = {};
+  var extraHeaders = {
+    number: ORDER_NUMBER_HEADER,
+    snapshot: SNAPSHOT_HEADER,
+    paidWith: PAID_WITH_HEADER,
+    upiReference: UPI_REFERENCE_HEADER,
+    printName: PRINT_NAME_HEADER,
+    printNumber: PRINT_NUMBER_HEADER
+  };
+  Object.entries(extraHeaders).forEach(function (entry) {
+    var key = entry[0], heading = entry[1];
     var existing = headers.indexOf(heading, HEADINGS.length) + 1;
-    if (existing) return existing;
+    if (existing) {
+      columns[key] = existing;
+      return;
+    }
     var column = ++lastColumn;
     if (column > tab.getMaxColumns())
       tab.insertColumnsAfter(tab.getMaxColumns(), column - tab.getMaxColumns());
     tab.getRange(1, column).setValues([[heading]]).setFontWeight('bold');
     changed = true;
-    return column;
+    columns[key] = column;
   });
   if (changed) SpreadsheetApp.flush();
-  return { number: columns[0], snapshot: columns[1], paidWith: columns[2] };
+  return columns;
 }
 function openStorage_(p) {
   if (!p.SCREENSHOT_FOLDER_ID) setupError_('Set SCREENSHOT_FOLDER_ID.');
@@ -201,10 +217,10 @@ function locate_(tab, col, value) {
 function textCell_(s) {
   return "'" + String(s == null ? '' : s);
 }
-function orderRow_(o, fingerprint, date, link) {
-  var items = o.lines
+function orderItems_(lines, legacyPrint) {
+  return lines
     .map(function (line) {
-      return (
+      var item = (
         line.qty +
         ' × ' +
         line.name +
@@ -216,8 +232,41 @@ function orderRow_(o, fingerprint, date, link) {
         line.sku +
         ']'
       );
+      if (!legacyPrint || !line.print) return item;
+      var details = line.print.map(function (entry, index) {
+        var values = [];
+        if (entry.name) values.push('Name: ' + entry.name);
+        if (entry.number) values.push('Number: ' + entry.number);
+        var unit = line.qty > 1 ? 'Item ' + (index + 1) + ' · ' : '';
+        return '  ' + unit + values.join(' · ');
+      });
+      return [item].concat(details).join('\n');
     })
     .join('\n');
+}
+function printColumns_(lines) {
+  var names = [], numbers = [];
+  var singleItem = lines.length === 1 && lines[0].qty === 1;
+  lines.forEach(function (line) {
+    (line.print || []).forEach(function (entry, index) {
+      var item = singleItem
+        ? ''
+        : line.sku + (line.qty > 1 ? ' #' + (index + 1) : '') + ' · ';
+      if (entry.name) names.push(item + entry.name);
+      if (entry.number) numbers.push(item + entry.number);
+    });
+  });
+  return { name: names.join('\n'), number: numbers.join('\n') };
+}
+function writePrintColumns_(tab, row, columns, print) {
+  if (print.name)
+    tab.getRange(row, columns.printName).setValues([[textCell_(print.name)]]);
+  if (print.number)
+    tab.getRange(row, columns.printNumber)
+      .setNumberFormat('@')
+      .setValues([[textCell_(print.number)]]);
+}
+function orderRow_(o, fingerprint, date, link) {
   return [
     o.id,
     date,
@@ -227,7 +276,7 @@ function orderRow_(o, fingerprint, date, link) {
     textCell_(o.contact.phone),
     textCell_(o.contact.affiliation),
     textCell_(o.contact.roll),
-    textCell_(items),
+    textCell_(orderItems_(o.lines)),
     o.total / 100,
     textCell_(o.utr),
     link,
@@ -236,6 +285,7 @@ function orderRow_(o, fingerprint, date, link) {
 }
 function proof_(o) {
   var paidWith = (o && o.paidWith) || '';
+  var upiReference = (o && o.upiReference) || '';
   var referencePattern = paidWith === BANK_TRANSFER
     ? /^[A-Z0-9]{6,40}$/
     : /^[0-9]{12}$/;
@@ -245,6 +295,8 @@ function proof_(o) {
     typeof o.utr !== 'string' ||
     !referencePattern.test(o.utr) ||
     (paidWith && !PAYMENT_METHODS.includes(paidWith)) ||
+    (upiReference && (!paidWith || paidWith === BANK_TRANSFER ||
+      typeof upiReference !== 'string' || !/^MARC[A-F0-9]{28}$/.test(upiReference))) ||
     !o.contact ||
     !o.buyer ||
     !Array.isArray(o.lines) ||
@@ -267,9 +319,10 @@ function proof_(o) {
   var earlierSubmission = '';
   if (paidWith) {
     // The earlier receiver accepted the same order without recording its payment method.
-    earlierSubmission = JSON.stringify(submission);
+    if (!upiReference) earlierSubmission = JSON.stringify(submission);
     submission.push(paidWith);
   }
+  if (upiReference) submission.push(upiReference);
   var fingerprint = digest_(JSON.stringify(submission));
   return {
     bytes: bytes,
@@ -481,14 +534,18 @@ function saveOrder_(p, o) {
     var when = new Date().toISOString();
     var number = nextOrderNumber_(tab, columns, o.contact);
     var snapshot = orderSnapshot_(buyerKey_(o.buyer), o.lines);
+    var print = printColumns_(o.lines);
     tab.getRange(row, columns.number).setValues([[number]]);
     tab.getRange(row, columns.snapshot).setValues([[snapshot]]);
     if (o.paidWith) tab.getRange(row, columns.paidWith).setValues([[textCell_(o.paidWith)]]);
+    if (o.upiReference)
+      tab.getRange(row, columns.upiReference).setValues([[textCell_(o.upiReference)]]);
+    writePrintColumns_(tab, row, columns, print);
     var cells = tab.getRange(row, 1, 1, HEADINGS.length);
     cells.setValues([orderRow_(o, evidence.fingerprint, when, link)]);
     SpreadsheetApp.flush();
     var saved = tab
-      .getRange(row, 1, 1, Math.max(columns.number, columns.snapshot, columns.paidWith))
+      .getRange(row, 1, 1, Math.max.apply(null, Object.values(columns)))
       .getDisplayValues()[0];
     if (
       saved[0] !== o.id ||
@@ -497,7 +554,10 @@ function saveOrder_(p, o) {
       saved[12] !== evidence.fingerprint ||
       saved[columns.number - 1] !== number ||
       saved[columns.snapshot - 1] !== snapshot ||
-      (o.paidWith && saved[columns.paidWith - 1] !== o.paidWith)
+      (o.paidWith && saved[columns.paidWith - 1] !== o.paidWith) ||
+      (o.upiReference && saved[columns.upiReference - 1] !== o.upiReference) ||
+      (print.name && saved[columns.printName - 1] !== print.name) ||
+      (print.number && saved[columns.printNumber - 1] !== print.number)
     )
       throw Error('The order row could not be confirmed.');
     return savedReceipt_(o.id, saved, number);
@@ -598,6 +658,15 @@ function parseSku_(line) {
     .map(function (s) {
       return s.trim();
     });
+  var printFields = [];
+  if (fields.length > 5 && /^print\s*=/i.test(fields[fields.length - 1])) {
+    var printOptions = fields.pop().replace(/^print\s*=/i, '').split(',').map(function (option) {
+      return option.trim().toLowerCase();
+    });
+    if (printOptions.some(function (option) { return option !== 'name' && option !== 'number'; }))
+      throw Error('Use print=name, print=number or print=name,number for ' + fields[0] + '.');
+    printFields = ['name', 'number'].filter(function (option) { return printOptions.includes(option); });
+  }
   if (
     fields.length < 5 ||
     fields.length > 8 ||
@@ -632,7 +701,8 @@ function parseSku_(line) {
     size: fields[3],
     paise:
       Number(price[0]) * 100 + Number(((price[1] || '') + '00').slice(0, 2)),
-    images: images
+    images: images,
+    printFields: printFields
   };
 }
 function products_(rows) {
@@ -677,7 +747,9 @@ function products_(rows) {
       colour: first.colour,
       image: images[0] || '',
       skus: options.map(function (row) {
-        return { sku: row.sku, size: row.size, paise: row.paise };
+        var sku = { sku: row.sku, size: row.size, paise: row.paise };
+        if (row.printFields.length) sku.printFields = row.printFields;
+        return sku;
       })
     };
     if (images.length > 1) product.extraImages = images.slice(1);
@@ -817,6 +889,8 @@ function catalogue_(p) {
     )
       throw Error('Check the configured QR link and payee.');
     draft.payment = { qr: p.PAYMENT_QR_URL, payee: payee, upi: upi };
+    var merchantCode = (p.UPI_MERCHANT_CODE || '').trim();
+    if (/^[0-9]{4}$/.test(merchantCode)) draft.payment.merchantCode = merchantCode;
     draft.ready =
       published && form.isAcceptingResponses() && draft.products.length > 0;
   } catch (error) {
@@ -851,6 +925,46 @@ function checkOrderStorage() {
       (catalog.ready ? 'open' : 'paused') +
       '.'
   );
+}
+
+/** Run in the editor to move print details from older orders into their own columns. */
+function moveExistingPrintDetails() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(12000);
+  try {
+    var storage = openStorage_(properties_());
+    var tab = storage.tab, columns = storage.columns;
+    var count = tab.getLastRow() - 1;
+    var moved = 0;
+    if (count > 0) {
+      tab.getRange(2, 9, count, 1).getDisplayValues().forEach(function (row, index) {
+        var items = row[0];
+        if (!/\n  (?:Item [0-9]+ · )?(?:Name|Number): /.test(items)) return;
+        var rowNumber = index + 2;
+        var lines;
+        try {
+          lines = JSON.parse(tab.getRange(rowNumber, columns.snapshot).getValues()[0][0]).lines;
+          if (orderItems_(lines, true) !== items) return;
+        } catch (invalidSnapshot) {
+          return;
+        }
+        var print = printColumns_(lines);
+        var existingName = tab.getRange(rowNumber, columns.printName).getDisplayValues()[0][0];
+        var existingNumber = tab.getRange(rowNumber, columns.printNumber).getDisplayValues()[0][0];
+        if ((existingName && existingName !== print.name) ||
+            (existingNumber && existingNumber !== print.number))
+          return;
+        writePrintColumns_(tab, rowNumber, columns, print);
+        SpreadsheetApp.flush();
+        tab.getRange(rowNumber, 9).setValues([[textCell_(orderItems_(lines))]]);
+        moved++;
+      });
+      SpreadsheetApp.flush();
+    }
+    console.log('Moved print details for ' + moved + ' order(s).');
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /** Called on an owner-managed timer. Redeploy only when the Form-derived catalogue changes. */

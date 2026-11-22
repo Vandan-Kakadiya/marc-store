@@ -15,6 +15,11 @@ const sessionCookie = '__Host-marc-vercel-user';
 const sessionPurpose = 'buyer session v2';
 const sessionSeconds = 20 * 60;
 const callbackPath = '/api/auth/callback';
+const instituteDomain = 'iimtrichy.ac.in';
+
+function instituteEmail(email) {
+  return typeof email === 'string' && email.toLowerCase().endsWith('@' + instituteDomain);
+}
 function getCookie(req, name) {
   const prefix = name + '=';
   return (
@@ -52,12 +57,13 @@ export function loginReady(env) {
   );
 }
 export function getUser(req, env) {
-  return unseal(
+  const user = unseal(
     getCookie(req, sessionCookie),
     sessionPurpose,
     env.MARC_SESSION_KEY || '',
     3600
   );
+  return user?.googleEmail === true && instituteEmail(user.email) ? user : null;
 }
 export function logout() {
   return json({ ok: true }, 200, {
@@ -119,7 +125,8 @@ export function createAuth({ env, fetcher = fetch }) {
           state,
           code_challenge: challenge,
           code_challenge_method: 'S256',
-          prompt: 'select_account'
+          prompt: 'select_account',
+          hd: instituteDomain
         });
         return redirect(google.href, [setCookie(stateCookie, token, 600)]);
       } catch (e) {
@@ -191,12 +198,13 @@ export function createAuth({ env, fetcher = fetch }) {
           email_verified !== true
         )
           fail(403, 'Use a Google account with a verified email address.');
+        if (!instituteEmail(email) || typeof hd !== 'string' || hd.toLowerCase() !== instituteDomain)
+          fail(403, 'Sign in with your IIM Trichy Google account.');
         const session = seal(
           {
             sub,
             email,
-            googleEmail:
-              /@gmail\.com$/i.test(email) || (typeof hd === 'string' && !!hd),
+            googleEmail: true,
             name: typeof name === 'string' ? name.slice(0, 120) : '',
             expires: Date.now() + sessionSeconds * 1000
           },

@@ -9,5 +9,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "qrcode-generator": "2.0.4"
   }
 }

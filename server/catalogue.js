@@ -132,6 +132,9 @@ export function validateCatalogue(obj) {
         .map(({ image, title, href }) => ({ image, title, href }))
     : [];
   const p = obj.payment;
+  const merchantCode = typeof p?.merchantCode === 'string' && /^[0-9]{4}$/.test(p.merchantCode)
+    ? p.merchantCode
+    : '';
   const payment =
     p &&
     publicImage(p.qr) &&
@@ -140,7 +143,12 @@ export function validateCatalogue(obj) {
     p.payee.length <= 120 &&
     typeof p.upi === 'string' &&
     p.upi.length <= 160
-      ? { qr: p.qr, payee: p.payee, upi: p.upi }
+      ? {
+          qr: p.qr,
+          payee: p.payee,
+          upi: p.upi,
+          ...(merchantCode ? { merchantCode } : {})
+        }
       : null;
   if (obj.ready && (!products.length || !payment || !obj.version))
     throw Error('Open catalogue is missing details.');

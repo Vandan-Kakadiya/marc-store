@@ -896,8 +896,7 @@ dialog::backdrop {
 .checkout-panel form button {
   margin-top: 7px;
 }
-.checkout-panel small,
-.pay-block span {
+.checkout-panel small {
   font-size: 12px;
   font-weight: 400;
   color: var(--muted);
@@ -905,26 +904,82 @@ dialog::backdrop {
 .checkout-panel .text-btn {
   margin-top: 8px;
 }
+.payment-total {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 16px;
+}
+.payment-total > span {
+  color: var(--muted);
+  font-size: 14px;
+}
+#pay-amount {
+  color: var(--navy);
+  font-size: clamp(32px, 7vw, 50px);
+  line-height: 1.08;
+}
+.payment-total p {
+  margin: 2px 0 0;
+}
+.upi-launch {
+  display: flex;
+  justify-content: center;
+  text-align: center;
+}
+.upi-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.upi-shortcuts a {
+  display: grid;
+  flex: 1 0 auto;
+  place-items: center;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.payment-qr {
+  margin-block: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
 .pay-block {
   display: flex;
   gap: 20px;
   align-items: center;
   flex-wrap: wrap;
-  border: 1px solid var(--rule);
-  padding: 12px;
+  margin-top: 10px;
 }
 .pay-block img {
   object-fit: contain;
-  max-width: 100%;
+  width: min(220px, 100%);
+  height: auto;
 }
 .pay-block div {
-  display: grid;
-  gap: 3px;
+  flex: 1 1 180px;
 }
-.pay-block strong {
-  font-size: 21px;
-  color: var(--navy);
-  margin-bottom: 7px;
+.upi-id {
+  display: flex;
+  gap: 4px 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 14px;
+}
+.upi-id strong {
+  overflow-wrap: anywhere;
+}
+.checkout-panel .upi-id .text-btn {
+  min-height: 44px;
+  margin-top: 0;
+}
+.pay-block p {
+  margin: 0;
 }
 .checkout-panel .qr-help {
   color: var(--muted);
@@ -1142,10 +1197,6 @@ details summary {
   }
   .pay-block {
     gap: 12px;
-  }
-  .pay-block img {
-    width: 145px;
-    height: auto;
   }
   .bag-dialog {
     padding: 17px;

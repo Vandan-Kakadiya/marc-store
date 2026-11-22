@@ -13,9 +13,9 @@
     </script>
     <link rel="icon" href="assets/marc-logo.png" />
     <link rel="modulepreload" href="market-core.js?v=10" />
-    <link rel="stylesheet" href="market.css?v=22" />
+    <link rel="stylesheet" href="market.css?v=23" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=12"></script>
+    <script type="module" src="checkout.js?v=13"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -108,48 +108,63 @@
           </section>
           <section id="payment" hidden>
             <h2>Pay with UPI</h2>
-            <p>
-              Scan the QR and check the recipient and amount in your UPI app.
-            </p>
-            <div class="pay-block">
-              <img
-                id="qr"
-                width="200"
-                height="210"
-                alt="Payment QR for the order recipient"
-              />
-              <div>
-                <span>Pay to</span><strong id="payee"></strong
-                ><span>Order amount</span><strong id="pay-amount"></strong
-                ><small id="upi"></small
-                ><a id="qr-link" target="_blank" rel="noopener" class="text-btn"
-                  >Open QR image ↗</a
-                >
-              </div>
+            <div class="payment-total">
+              <span>Amount to pay</span>
+              <strong id="pay-amount"></strong>
+              <p>Pay to <strong id="payee"></strong></p>
             </div>
-            <p class="qr-help">
-              Paying on this phone? Save or screenshot the QR and open it from your UPI app’s gallery.
-              For Google Pay payments over ₹2,000, scan the QR from another device.
-            </p>
-            <details class="bank-details" id="bank-details" hidden>
-              <summary>Pay by bank transfer</summary>
-              <dl>
-                <dt>Name</dt>
-                <dd id="bank-name"></dd>
-                <dt>Account number</dt>
-                <dd id="bank-account-number"></dd>
-                <dt>IFSC</dt>
-                <dd id="bank-ifsc"></dd>
-              </dl>
-              <p>
-                Transfer the exact order amount shown above. After paying, choose
-                <strong>Bank transfer (NEFT / IMPS / RTGS)</strong> and enter the
-                UTR from your bank receipt.
-              </p>
-            </details>
+            <div id="payment-methods">
+              <div id="upi-app-payment" hidden>
+                <a class="action navy upi-launch" id="pay-with-upi">Pay with a UPI app</a>
+                <div class="upi-shortcuts" id="upi-shortcuts" hidden role="group" aria-label="Open a specific UPI app">
+                  <a id="upi-gpay">GPay</a>
+                  <a id="upi-phonepe">PhonePe</a>
+                  <a id="upi-paytm">Paytm</a>
+                </div>
+                <p class="qr-help">Check the recipient and amount in the app. Return here after paying.</p>
+              </div>
+              <details class="payment-qr" id="payment-qr" open>
+                <summary>Scan a UPI QR code</summary>
+                <div class="pay-block">
+                  <img id="qr" width="220" height="220" alt="UPI payment QR code" />
+                  <div>
+                    <p class="qr-help" id="qr-help"></p>
+                    <a id="qr-link" target="_blank" rel="noopener noreferrer" class="text-btn"
+                      >Open QR image ↗</a
+                    >
+                  </div>
+                </div>
+                <p class="qr-help" id="qr-gallery-help" hidden>
+                  On this phone, save or screenshot the QR and scan it from your UPI app’s gallery.
+                  For Google Pay gallery payments over ₹2,000, scan from a second device.
+                </p>
+              </details>
+              <div class="upi-id" id="upi-id" hidden>
+                <span>UPI ID</span>
+                <strong id="upi"></strong>
+                <button type="button" class="text-btn" id="copy-upi">Copy</button>
+                <span id="upi-copy-status" class="qr-help" role="status"></span>
+              </div>
+              <details class="bank-details" id="bank-details" hidden>
+                <summary>Pay by bank transfer</summary>
+                <dl>
+                  <dt>Name</dt>
+                  <dd id="bank-name"></dd>
+                  <dt>Account number</dt>
+                  <dd id="bank-account-number"></dd>
+                  <dt>IFSC</dt>
+                  <dd id="bank-ifsc"></dd>
+                </dl>
+                <p>
+                  Transfer the exact order amount shown above. After paying, choose
+                  <strong>Bank transfer (NEFT / IMPS / RTGS)</strong> and enter the
+                  UTR from your bank receipt.
+                </p>
+              </details>
+            </div>
             <h3>After paying</h3>
             <p id="proof-tip">
-              Already paid? Submit your screenshot below. Pay only once.
+              Submit your UTR and screenshot. MARC checks the bank record before confirming payment.
             </p>
             <form id="proof-form">
               <label id="paid-with-label">

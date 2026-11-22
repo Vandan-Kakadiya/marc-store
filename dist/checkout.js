@@ -21,7 +21,10 @@ const path = new URL(location.href);
 const contactForm = $('contact-form');
 const fields = contactForm.elements,
   proof = $('proof-form').elements;
-const printLabels = { name: 'Name to print', number: 'Number to print' };
+const printLabels = {
+  name: 'Name to print (optional)',
+  number: 'Number to print (optional)'
+};
 const orderProgress = $('order-progress');
 const googleButton = $('google');
 const googleProgress = $('google-progress');
@@ -152,6 +155,7 @@ function summary(items, fixed = false) {
         const values = [];
         if (entry.name) values.push('Name: ' + entry.name);
         if (entry.number) values.push('Number: ' + entry.number);
+        if (!values.length) return;
         const prefix = item.qty > 1 ? 'Item ' + (index + 1) + ' · ' : '';
         description.append(node('p', 'line-meta print-summary', prefix + values.join(' · ')));
       });
@@ -200,7 +204,6 @@ function renderPrintInputs() {
       for (const field of sku.printFields) {
         const input = node('input');
         input.name = printInputName(sku.sku, index, field);
-        input.required = true;
         input.autocomplete = 'off';
         input.maxLength = field === 'number' ? 4 : 80;
         if (field === 'number') {
@@ -208,8 +211,6 @@ function renderPrintInputs() {
           input.pattern = '[0-9]{1,4}';
           input.placeholder = '0 to 9999';
           input.title = 'Enter a whole number from 0 to 9999';
-        } else {
-          input.pattern = '.*\\S.*';
         }
         input.value = previous.get(input.name) ?? '';
         const label = node('label', '', printLabels[field]);
@@ -229,7 +230,7 @@ function checkoutItems() {
     if (!sku) return item;
     const print = Array.from({ length: item.qty }, (_, index) =>
       Object.fromEntries(sku.printFields.map((field) => [
-        field, values.get(printInputName(sku.sku, index, field))
+        field, values.get(printInputName(sku.sku, index, field)) ?? ''
       ]))
     );
     return { ...item, print };
@@ -255,22 +256,70 @@ function updateReferenceField() {
     ? 'Reference from your bank receipt'
     : '12-digit reference';
 }
+function showUpiMethods(payment, amount) {
+  const link = payment.upiLink?.startsWith('upi://pay?') ? payment.upiLink : '';
+  const android = navigator.userAgentData?.platform === 'Android' ||
+    /Android/i.test(navigator.userAgent);
+  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const openApps = !!link && (android || ios);
+  const androidIntent = !!link && android && /Chrome\//.test(navigator.userAgent);
+  const pay = $('pay-with-upi');
+  $('upi-app-payment').hidden = !openApps;
+  $('upi-shortcuts').hidden = !androidIntent;
+  if (openApps) {
+    pay.href = ios ? link.replace('upi://pay?', 'gpay://upi/pay?') : link;
+    pay.textContent = 'Pay ' + amount + (ios ? ' with Google Pay' : ' with a UPI app');
+  }
+  if (androidIntent) {
+    const fallback = encodeURIComponent(new URL('/checkout.html#payment-qr', location.origin).href);
+    const intent = link.replace('upi://', 'intent://') + '#Intent;scheme=upi;';
+    const end = 'S.browser_fallback_url=' + fallback + ';end';
+    pay.href = intent + end;
+    $('upi-gpay').href = intent + 'package=com.google.android.apps.nbu.paisa.user;' + end;
+    $('upi-phonepe').href = intent + 'package=com.phonepe.app;' + end;
+    $('upi-paytm').href = intent + 'package=net.one97.paytm;' + end;
+  }
+  const qr = $('qr');
+  const qrLink = $('qr-link');
+  const orderQr = payment.orderQr?.startsWith('data:image/gif;base64,') ? payment.orderQr : '';
+  function displayQr(generated) {
+    const source = generated ? orderQr : payment.qr;
+    $('qr-help').textContent = generated
+      ? 'Scan with your phone’s UPI app. The amount and order reference are filled in for you.'
+      : 'Scan with your phone’s UPI app and enter the exact order amount shown above.';
+    qrLink.href = source;
+    qrLink.textContent = generated ? 'Save QR image' : 'Open QR image ↗';
+    if (generated) {
+      qrLink.download = 'marc-payment-qr.gif';
+      qrLink.removeAttribute('target');
+    } else {
+      qrLink.removeAttribute('download');
+      qrLink.target = '_blank';
+    }
+    qr.src = source;
+  }
+  qr.onerror = () => {
+    if (qr.getAttribute('src') === orderQr) displayQr(false);
+    else message('The payment QR did not load. Check with MARC before paying.', true);
+  };
+  displayQr(!!orderQr);
+  $('payment-qr').open = !openApps || location.hash === '#payment-qr';
+  $('qr-gallery-help').hidden = !(android || ios);
+  $('upi-id').hidden = !/^[a-z0-9][a-z0-9._-]*@[a-z][a-z0-9]+$/i.test(payment.upi);
+  $('upi').textContent = payment.upi;
+  $('upi-copy-status').textContent = '';
+}
 function openPayment(record) {
   order = record;
   show('payment');
   summary(record.lines, true);
-  $('summary-total').textContent = money(record.total);
+  const amount = money(record.total);
+  $('summary-total').textContent = amount;
   $('payee').textContent = record.payment.payee;
-  $('pay-amount').textContent = money(record.total);
-  $('upi').textContent = record.payment.upi;
-  const qr = $('qr');
-  qr.onerror = () =>
-    message(
-      'The payment QR did not load. Check with MARC before paying.',
-      true
-    );
-  qr.src = record.payment.qr;
-  $('qr-link').href = record.payment.qr;
+  $('pay-amount').textContent = amount;
+  $('payment-methods').hidden = !!draft.sent;
+  if (!draft.sent) showUpiMethods(record.payment, amount);
 
   const bank = record.payment.bank;
   const bankDetails = $('bank-details');
@@ -290,7 +339,7 @@ function openPayment(record) {
   $('cancel-unpaid').hidden = !!draft.sent;
   $('proof-tip').textContent = draft.sent
     ? 'Retry with the same UTR and screenshot. Pay only once.'
-    : 'After paying, select your payment method, enter the reference and attach your screenshot.';
+    : 'Submit your UTR and screenshot. MARC checks the bank record before confirming payment.';
 }
 function openReceipt(entry) {
   show('receipt');
@@ -474,7 +523,6 @@ contactForm.onsubmit = async (e) => {
     const data = await post('quote', {
       id: draft.id,
       version: catalogue.version,
-      paidWithSelection: true,
       items: checkoutItems(),
       contact: {
         name: fields.name.value,
@@ -523,6 +571,18 @@ $('cancel-unpaid').onclick = () => {
     location.assign('./#shop');
   }
 };
+window.addEventListener('hashchange', () => {
+  if (location.hash === '#payment-qr') $('payment-qr').open = true;
+});
+$('copy-upi').onclick = async () => {
+  const status = $('upi-copy-status');
+  try {
+    await navigator.clipboard.writeText($('upi').textContent);
+    status.textContent = 'Copied';
+  } catch {
+    status.textContent = 'Select the UPI ID to copy it.';
+  }
+};
 $('proof-form').onsubmit = async (e) => {
   e.preventDefault();
   if (!user || !order || !draft?.quote || $('submit-proof').disabled) return;
@@ -551,6 +611,8 @@ $('proof-form').onsubmit = async (e) => {
   }
   draft = pending;
   proof.paidWith.disabled = true;
+  $('payment-methods').hidden = true;
+  $('proof-tip').textContent = 'Retry with the same UTR and screenshot. Pay only once.';
   $('cancel-unpaid').hidden = true;
   $('submit-proof').disabled = true;
   message();
