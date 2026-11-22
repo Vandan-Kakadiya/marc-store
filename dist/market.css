@@ -865,6 +865,31 @@ dialog::backdrop {
 .checkout input[readonly] {
   background: #f0efec;
 }
+#print-options h3 {
+  margin: 4px 0 12px;
+}
+#print-items {
+  display: grid;
+  gap: 14px;
+}
+.print-item {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  min-inline-size: 0;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.print-item legend {
+  max-width: 100%;
+  padding-inline: 4px;
+  font-weight: 700;
+}
+.print-summary,
+.print-item legend {
+  overflow-wrap: anywhere;
+}
 .checkout input[type='file'] {
   font-size: 13px;
 }

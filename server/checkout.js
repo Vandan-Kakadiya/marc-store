@@ -57,6 +57,23 @@ function contactInfo(data, buyer) {
     roll
   };
 }
+function printDetails(item, fields) {
+  if (!fields.length) return;
+  if (!Array.isArray(item.print) || item.print.length !== item.qty)
+    fail(400, 'Enter the print details for each customised item.');
+  return item.print.map((entry) => {
+    const unit = {};
+    if (fields.includes('name'))
+      unit.name = requiredText(entry?.name, 80, 'the name to print');
+    if (fields.includes('number')) {
+      const number = entry?.number;
+      if (typeof number !== 'string' || !/^[0-9]{1,4}$/.test(number))
+        fail(400, 'Enter a number to print from 0 to 9999.');
+      unit.number = number;
+    }
+    return unit;
+  });
+}
 function lineItems(catalogue, input) {
   if (
     !Array.isArray(input) ||
@@ -73,7 +90,8 @@ function lineItems(catalogue, input) {
           name: p.name,
           colour: p.colour,
           size: s.size,
-          paise: s.paise
+          paise: s.paise,
+          printFields: s.printFields ?? []
         }
       ])
     )
@@ -96,7 +114,9 @@ function lineItems(catalogue, input) {
       fail(409, 'An option is no longer available. Return to the shop.');
     seen.add(li.sku);
     units += li.qty;
-    return { ...item, qty: li.qty };
+    const { printFields, ...line } = item;
+    const print = printDetails(li, printFields);
+    return { ...line, qty: li.qty, ...(print ? { print } : {}) };
   });
   if (units > catalogue.maxItems)
     fail(400, 'The order exceeds the current item limit.');
@@ -333,7 +353,9 @@ export function createCheckout({ env, fetcher = fetch }) {
           ? 2600000
           : action === 'resume'
             ? quoteMax + 128
-            : 22000;
+            : action === 'quote'
+              ? 64000
+              : 22000;
       const body = await readJSON(req, maxJSON);
       switch (action) {
         case 'quote': {
@@ -361,10 +383,10 @@ export function createCheckout({ env, fetcher = fetch }) {
             requiresPaidWith: body.paidWithSelection === true,
             expires: Date.now() + 7 * 86400000
           };
-          return json({
-            ...quoteView(quote),
-            token: seal(quote, quotePurpose, env.MARC_SESSION_KEY)
-          });
+          const token = seal(quote, quotePurpose, env.MARC_SESSION_KEY);
+          if (token.length > quoteMax)
+            fail(400, 'This order contains too many details. Split it into smaller orders before paying.');
+          return json({ ...quoteView(quote), token });
         }
         case 'resume':
           return json(quoteView(openQuote(body.quote, env, buyer)));

@@ -237,6 +237,9 @@ function saveCatalogue(data) {
       colour: p.colour,
       size: s.size,
       paise: s.paise,
+      printFields: Array.isArray(s.printFields)
+        ? ['name', 'number'].filter((field) => s.printFields.includes(field))
+        : [],
       image: p.image,
       imageVariants,
       extraImages

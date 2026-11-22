@@ -14,12 +14,14 @@ import {
   post,
   read,
   save
-} from './market-core.js?v=6';
+} from './market-core.js?v=10';
 
 const legacyReceiptKey = 'marc-vercel-receipts-v1';
 const path = new URL(location.href);
-const fields = $('contact-form').elements,
+const contactForm = $('contact-form');
+const fields = contactForm.elements,
   proof = $('proof-form').elements;
+const printLabels = { name: 'Name to print', number: 'Number to print' };
 const orderProgress = $('order-progress');
 const googleButton = $('google');
 const googleProgress = $('google-progress');
@@ -89,7 +91,7 @@ function expireSession(
   orderProgress.close();
   $('continue-payment').disabled = true;
   $('google').disabled = false;
-  $('contact-form').reset();
+  contactForm.reset();
   $('proof-form').reset();
   $('past-orders').replaceChildren();
   $('order-number').textContent = '';
@@ -145,6 +147,15 @@ function summary(items, fixed = false) {
         row.colour + ' / ' + row.size + ' · Qty ' + item.qty
       )
     );
+    if (fixed && Array.isArray(row.print)) {
+      row.print.forEach((entry, index) => {
+        const values = [];
+        if (entry.name) values.push('Name: ' + entry.name);
+        if (entry.number) values.push('Number: ' + entry.number);
+        const prefix = item.qty > 1 ? 'Item ' + (index + 1) + ' · ' : '';
+        description.append(node('p', 'line-meta print-summary', prefix + values.join(' · ')));
+      });
+    }
     const listed = row.image ? row : catalogue.skus.find((s) => s.sku === row.sku);
     const photoRow = { ...row, image: listed?.image, imageVariants: listed?.imageVariants };
     line.append(
@@ -165,11 +176,71 @@ function updateRoll() {
   fields.roll.required = showRoll;
   if (!showRoll) fields.roll.value = '';
 }
+function printableSku(item) {
+  if (!Number.isInteger(item.qty) || item.qty < 1 || item.qty > catalogue.limit)
+    return null;
+  const sku = catalogue.skus.find((row) => row.sku === item.sku);
+  return sku?.printFields?.length ? sku : null;
+}
+function printInputName(sku, index, field) {
+  return 'print-' + sku + '-' + index + '-' + field;
+}
+function renderPrintInputs() {
+  const previous = new FormData(contactForm);
+  const items = [];
+  for (const item of draft.items) {
+    const sku = printableSku(item);
+    if (!sku) continue;
+    for (let index = 0; index < item.qty; index++) {
+      const fieldset = node('fieldset', 'print-item');
+      const itemLabel = sku.name + ' · ' + sku.colour + ' / ' + sku.size;
+      fieldset.append(node(
+        'legend', '', itemLabel + (item.qty > 1 ? ' · Item ' + (index + 1) : '')
+      ));
+      for (const field of sku.printFields) {
+        const input = node('input');
+        input.name = printInputName(sku.sku, index, field);
+        input.required = true;
+        input.autocomplete = 'off';
+        input.maxLength = field === 'number' ? 4 : 80;
+        if (field === 'number') {
+          input.inputMode = 'numeric';
+          input.pattern = '[0-9]{1,4}';
+          input.placeholder = '0 to 9999';
+          input.title = 'Enter a whole number from 0 to 9999';
+        } else {
+          input.pattern = '.*\\S.*';
+        }
+        input.value = previous.get(input.name) ?? '';
+        const label = node('label', '', printLabels[field]);
+        label.append(input);
+        fieldset.append(label);
+      }
+      items.push(fieldset);
+    }
+  }
+  $('print-items').replaceChildren(...items);
+  $('print-options').hidden = !items.length;
+}
+function checkoutItems() {
+  const values = new FormData(contactForm);
+  return draft.items.map((item) => {
+    const sku = printableSku(item);
+    if (!sku) return item;
+    const print = Array.from({ length: item.qty }, (_, index) =>
+      Object.fromEntries(sku.printFields.map((field) => [
+        field, values.get(printInputName(sku.sku, index, field))
+      ]))
+    );
+    return { ...item, print };
+  });
+}
 function openContact() {
   show('contact');
   fields.email.value = user.email;
   if (!fields.name.value) fields.name.value = user.name || '';
   updateRoll();
+  renderPrintInputs();
 }
 function updateReferenceField() {
   const bank = proof.paidWith.value === $('bank-payment-method').value;
@@ -386,14 +457,14 @@ for (const id of ['switch-account', 'switch-order-account']) {
   $(id).onclick = async () => {
     try {
       await post('logout');
-      $('contact-form').reset();
+      contactForm.reset();
       location.assign('checkout.html' + (ordersMode ? '?orders=1' : ''));
     } catch (e) {
       message(e.message, true);
     }
   };
 }
-$('contact-form').onsubmit = async (e) => {
+contactForm.onsubmit = async (e) => {
   e.preventDefault();
   if (!user || !draft || $('continue-payment').disabled) return;
   const turn = loadCount;
@@ -404,7 +475,7 @@ $('contact-form').onsubmit = async (e) => {
       id: draft.id,
       version: catalogue.version,
       paidWithSelection: true,
-      items: draft.items,
+      items: checkoutItems(),
       contact: {
         name: fields.name.value,
         phone: fields.phone.value,
@@ -429,6 +500,7 @@ $('contact-form').onsubmit = async (e) => {
       try {
         catalogue = await liveCatalogue();
         if (turn !== loadCount) return;
+        renderPrintInputs();
         summary(draft.items);
       } catch {}
     }

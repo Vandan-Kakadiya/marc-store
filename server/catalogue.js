@@ -79,6 +79,7 @@ export function validateCatalogue(obj) {
     groups.add(p.id);
     const sizes = new Set();
     const skus = p.skus.map((s) => {
+      const printFields = s?.printFields ?? [];
       if (
         !s ||
         typeof s.sku !== 'string' ||
@@ -90,12 +91,22 @@ export function validateCatalogue(obj) {
         sizes.has(s.size.toLowerCase()) ||
         !Number.isSafeInteger(s.paise) ||
         s.paise < 1 ||
-        s.paise > 100000000
+        s.paise > 100000000 ||
+        !Array.isArray(printFields) ||
+        printFields.length > 2 ||
+        printFields.some((field) => field !== 'name' && field !== 'number') ||
+        new Set(printFields).size !== printFields.length
       )
         throw Error('Invalid option in catalogue.');
       codes.add(s.sku);
       sizes.add(s.size.toLowerCase());
-      return { sku: s.sku, size: s.size, paise: s.paise, price: s.paise / 100 };
+      return {
+        sku: s.sku,
+        size: s.size,
+        paise: s.paise,
+        price: s.paise / 100,
+        ...(printFields.length ? { printFields } : {})
+      };
     });
     return {
       id: p.id,

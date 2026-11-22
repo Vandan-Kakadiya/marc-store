@@ -12,10 +12,10 @@
       }
     </script>
     <link rel="icon" href="assets/marc-logo.png" />
-    <link rel="modulepreload" href="market-core.js?v=6" />
-    <link rel="stylesheet" href="market.css?v=21" />
+    <link rel="modulepreload" href="market-core.js?v=10" />
+    <link rel="stylesheet" href="market.css?v=22" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=11"></script>
+    <script type="module" src="checkout.js?v=12"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -89,6 +89,10 @@
                   title="Enter exactly 7 digits"
                   disabled
               /></label>
+              <div id="print-options" hidden>
+                <h3>Personalise your items</h3>
+                <div id="print-items"></div>
+              </div>
               <button
                 class="action navy"
                 type="submit"
