@@ -159,11 +159,17 @@ function summary(items, fixed = false) {
         if (entry.number) values.push('Number: ' + entry.number);
         if (!values.length) return;
         const prefix = item.qty > 1 ? 'Item ' + (index + 1) + ' · ' : '';
-        description.append(node('p', 'line-meta print-summary', prefix + values.join(' · ')));
+        description.append(
+          node('p', 'line-meta print-summary', prefix + values.join(' · '))
+        );
       });
     }
     const listed = row.image ? row : catalogue.skus.find((s) => s.sku === row.sku);
-    const photoRow = { ...row, image: listed?.image, imageVariants: listed?.imageVariants };
+    const photoRow = {
+      ...row,
+      image: listed?.image,
+      imageVariants: listed?.imageVariants
+    };
     line.append(
       picture(photoRow, 'thumb'),
       description,
@@ -200,9 +206,9 @@ function renderPrintInputs() {
     for (let index = 0; index < item.qty; index++) {
       const fieldset = node('fieldset', 'print-item');
       const itemLabel = sku.name + ' · ' + sku.colour + ' / ' + sku.size;
-      fieldset.append(node(
-        'legend', '', itemLabel + (item.qty > 1 ? ' · Item ' + (index + 1) : '')
-      ));
+      fieldset.append(
+        node('legend', '', itemLabel + (item.qty > 1 ? ' · Item ' + (index + 1) : ''))
+      );
       for (const field of sku.printFields) {
         const input = node('input');
         input.name = printInputName(sku.sku, index, field);
@@ -274,7 +280,9 @@ function showUpiMethods(payment, amount) {
     pay.textContent = 'Pay ' + amount + (ios ? ' with Google Pay' : ' with a UPI app');
   }
   if (androidIntent) {
-    const fallback = encodeURIComponent(new URL('/checkout.html#payment-qr', location.origin).href);
+    const fallback = encodeURIComponent(
+      new URL('/checkout.html#payment-qr', location.origin).href
+    );
     const intent = link.replace('upi://', 'intent://') + '#Intent;scheme=upi;';
     const end = 'S.browser_fallback_url=' + fallback + ';end';
     pay.href = intent + end;
@@ -284,7 +292,9 @@ function showUpiMethods(payment, amount) {
   }
   const qr = $('qr');
   const qrLink = $('qr-link');
-  const orderQr = /^data:image\/(png|gif);base64,/.test(payment.orderQr || '') ? payment.orderQr : '';
+  const orderQr = /^data:image\/(png|gif);base64,/.test(payment.orderQr || '')
+    ? payment.orderQr
+    : '';
   function displayQr(generated) {
     const source = generated ? orderQr : payment.qr;
     $('qr-help').textContent = generated
@@ -293,7 +303,9 @@ function showUpiMethods(payment, amount) {
     qrLink.href = source;
     qrLink.textContent = generated ? 'Save QR image' : 'Open QR image ↗';
     if (generated) {
-      qrLink.download = orderQr.startsWith('data:image/png') ? 'marc-payment-qr.png' : 'marc-payment-qr.gif';
+      qrLink.download = orderQr.startsWith('data:image/png')
+        ? 'marc-payment-qr.png'
+        : 'marc-payment-qr.gif';
       qrLink.removeAttribute('target');
     } else {
       qrLink.removeAttribute('download');
@@ -364,7 +376,8 @@ function openReceipt(entry) {
   $('receipt').querySelector('h2').focus({ preventScroll: true });
 }
 async function finishSubmission(saved, turn) {
-  if (saved.id !== draft?.id || !saved.token) throw Error('The order save could not be confirmed.');
+  if (saved.id !== draft?.id || !saved.token)
+    throw Error('The order save could not be confirmed.');
   const completed = { ...draft, receipt: saved.token };
   const savedDraft = save(sessionStorage, DRAFT, completed);
   draft = completed;
@@ -373,12 +386,13 @@ async function finishSubmission(saved, turn) {
   if (turn === loadCount) {
     orderProgress.close();
     message();
-    openReceipt(saved);
+    if (!ordersMode) openReceipt(saved);
   }
   try {
     await finishBag(completed);
   } catch {
-    if (turn === loadCount) message('Your order was saved. Your browser could not update the bag.');
+    if (turn === loadCount)
+      message('Your order was saved. Your browser could not update the bag.');
   }
   if (turn === loadCount && !savedDraft)
     message('Your order was saved. Keep a copy of your order reference.');
@@ -420,7 +434,8 @@ async function checkSubmission(turn) {
     if (turn !== loadCount) return true;
     if (entry.id !== draft.id) throw Error('The order status could not be confirmed.');
     if (entry.token) await finishSubmission(entry, turn);
-    else if (entry.status === 'processing' || entry.status === 'needs_attention') showPendingOrder(entry, turn);
+    else if (entry.status === 'processing' || entry.status === 'needs_attention')
+      showPendingOrder(entry, turn);
     else if (entry.status === 'not_submitted' && !draft.queued) return false;
     else throw Error('The order status could not be confirmed.');
   } catch (e) {
@@ -438,46 +453,143 @@ async function checkSubmission(turn) {
 async function myOrders(turn) {
   show('orders');
   summary([]);
-  const out = $('past-orders'),
-    history = read(localStorage, legacyReceiptKey, []);
-  out.replaceChildren();
-  message('Loading your orders…');
+
+  const out = $('past-orders');
+  const history = read(localStorage, legacyReceiptKey, []);
   const entries = Array.isArray(history) ? history : [];
-  const tokens = entries.slice(0, 12).map((e) => e?.token).filter(Boolean);
+  const tokens = entries.slice(0, 12).map((entry) => entry?.token).filter(Boolean);
   if (draft?.receipt) tokens.push(draft.receipt);
-  const receipts = await post('history', { tokens });
-  if (turn !== loadCount) return;
-  message();
-  if (draft?.quote && !draft.receipt)
-    out.append(
-      btn('Resume checkout', 'action navy', () =>
-        location.assign('checkout.html')
-      )
-    );
-  if (!receipts.length)
-    out.append(
-      node(
-        'p',
-        'card-meta',
-        'No orders found for this Google account.'
-      )
-    );
-  for (const entry of receipts) {
-    const row = node('div', 'past-order');
-    row.append(
+
+  const active = draft?.quote && !draft.receipt ? draft : null;
+  const submitted = active && (active.sent || active.queued);
+  const list = node('div');
+  const current = submitted ? node('div', 'past-order') : null;
+  const uploadCheckUntil = Date.now() + 65000;
+  let accepted = Boolean(active?.queued);
+  let savedInHistory = false;
+  let title;
+
+  out.replaceChildren(list);
+  if (current) {
+    title = node('strong', '', accepted ? 'Order submitted' : 'Checking your order…');
+    current.setAttribute('aria-live', 'polite');
+    current.append(title);
+    out.prepend(current);
+  }
+
+  function renderReceipt(row, entry, justSaved = false) {
+    row.replaceChildren(
       node(
         'strong',
         '',
-        money(entry.total) +
-          ' · ' +
-          indiaTime.format(new Date(entry.submittedAt))
+        money(entry.total) + ' · ' + indiaTime.format(new Date(entry.submittedAt))
       ),
-      node('p', '', entry.number),
-      node('p', 'line-meta', entry.paymentStatus),
+      node('p', '', entry.number || entry.id),
+      node('p', 'line-meta', entry.paymentStatus || 'Payment under review'),
       btn('View receipt', 'text-btn', () => openReceipt(entry))
     );
-    out.append(row);
+    if (justSaved) row.prepend(node('p', 'line-meta', 'Order received'));
   }
+
+  function checkLater() {
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(checkCurrent, 12000 + Math.random() * 6000);
+  }
+
+  async function checkCurrent() {
+    if (turn !== loadCount || savedInHistory) return;
+
+    try {
+      const entry = await post('status', { quote: active.quote });
+      if (turn !== loadCount) return;
+      if (entry.id !== active.id) throw Error('Order status could not be confirmed.');
+
+      if (entry.token) {
+        if (!savedInHistory) renderReceipt(current, entry, true);
+        await finishSubmission(entry, turn);
+        return;
+      }
+      if (savedInHistory) return;
+
+      if (entry.status === 'processing') {
+        accepted = true;
+        if (!draft.queued) {
+          draft = { ...draft, queued: true };
+          save(sessionStorage, DRAFT, draft);
+        }
+        if (title.textContent !== 'Order submitted') {
+          title.textContent = 'Order submitted';
+          current.replaceChildren(title);
+        }
+        checkLater();
+      } else if (entry.status === 'needs_attention') {
+        title.textContent = 'Order needs attention';
+        current.replaceChildren(
+          title,
+          node('p', 'line-meta', entry.message),
+          node('p', 'line-meta', 'Order reference ' + entry.id)
+        );
+      } else if (entry.status === 'not_submitted' && !accepted) {
+        if (title.textContent !== 'Payment submission') {
+          title.textContent = 'Payment submission';
+          current.append(
+            btn('Check payment submission', 'text-btn', () => location.assign('checkout.html'))
+          );
+        }
+        if (Date.now() < uploadCheckUntil) checkLater();
+      } else {
+        checkLater();
+      }
+    } catch (error) {
+      if (turn !== loadCount || savedInHistory) return;
+      if (error.status === 401) {
+        expireSession('Sign in with the same Google account to check your order.');
+      } else if (error.status === 403 || error.status === 409) {
+        title.textContent = error.status === 403
+          ? 'Sign in with the account that started this checkout.'
+          : 'Contact MARC to check this submission.';
+        current.replaceChildren(title);
+      } else {
+        checkLater();
+      }
+    }
+  }
+
+  message('Loading your orders…');
+  if (current) void checkCurrent();
+
+  let receipts;
+  try {
+    receipts = await post('history', { tokens });
+  } catch (error) {
+    if (turn !== loadCount) return;
+    if (!current || error.status === 401) throw error;
+    list.append(node('p', 'card-meta', 'Try again to load your earlier orders.'));
+    message('', true);
+    return;
+  }
+  if (turn !== loadCount) return;
+
+  savedInHistory = !!active && receipts.some((entry) => entry.id === active.id);
+  if (savedInHistory) {
+    current?.remove();
+    clearTimeout(statusTimer);
+  } else if (active && !current) {
+    list.append(
+      btn('Resume checkout', 'action navy', () => location.assign('checkout.html'))
+    );
+  }
+
+  if (!receipts.length && !current) {
+    list.append(node('p', 'card-meta', 'No orders found for this Google account.'));
+  }
+
+  for (const entry of receipts) {
+    const row = node('div', 'past-order');
+    renderReceipt(row, entry);
+    list.append(row);
+  }
+  message();
 }
 async function boot() {
   const turn = ++loadCount;
@@ -569,6 +681,7 @@ async function boot() {
     message(e.message, true);
   }
 }
+
 for (const role of affiliations) fields.affiliation.add(new Option(role, role));
 fields.affiliation.onchange = updateRoll;
 proof.paidWith.onchange = updateReferenceField;
@@ -579,6 +692,7 @@ document.addEventListener('visibilitychange', checkSessionExpiry);
 orderProgress.addEventListener('cancel', (event) => event.preventDefault());
 googleProgress.addEventListener('cancel', (event) => event.preventDefault());
 googleButton.onclick = startGoogleSignIn;
+
 for (const id of ['switch-account', 'switch-order-account']) {
   $(id).onclick = async () => {
     try {
@@ -590,6 +704,7 @@ for (const id of ['switch-account', 'switch-order-account']) {
     }
   };
 }
+
 contactForm.onsubmit = async (e) => {
   e.preventDefault();
   if (!user || !draft || $('continue-payment').disabled) return;
@@ -639,6 +754,7 @@ contactForm.onsubmit = async (e) => {
         );
   }
 };
+
 $('cancel-unpaid').onclick = () => {
   if (
     !draft.sent &&
@@ -648,9 +764,11 @@ $('cancel-unpaid').onclick = () => {
     location.assign('./#shop');
   }
 };
+
 window.addEventListener('hashchange', () => {
   if (location.hash === '#payment-qr') $('payment-qr').open = true;
 });
+
 $('copy-upi').onclick = async () => {
   const status = $('upi-copy-status');
   try {
@@ -660,6 +778,7 @@ $('copy-upi').onclick = async () => {
     status.textContent = 'Select the UPI ID to copy it.';
   }
 };
+
 $('proof-form').onsubmit = async (e) => {
   e.preventDefault();
   if (!user || !order || !draft?.quote || $('submit-proof').disabled) return;
@@ -679,6 +798,7 @@ $('proof-form').onsubmit = async (e) => {
   payload.set('utr', proof.utr.value.trim());
   payload.set('proof', image, image.name);
   if (paidWith) payload.set('paidWith', paidWith);
+
   const pending = { ...draft, sent: true, ...(paidWith ? { paidWith } : {}) };
   if (!save(sessionStorage, DRAFT, pending)) {
     message(
@@ -686,6 +806,7 @@ $('proof-form').onsubmit = async (e) => {
     );
     return;
   }
+
   draft = pending;
   proof.paidWith.disabled = true;
   $('payment-methods').hidden = true;
@@ -693,6 +814,7 @@ $('proof-form').onsubmit = async (e) => {
   $('cancel-unpaid').hidden = true;
   $('submit-proof').disabled = true;
   message();
+
   let progressTimer;
   try {
     progressTimer = startOrderProgress();
