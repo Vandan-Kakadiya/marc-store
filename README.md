@@ -2,7 +2,7 @@
 
 This update uses the latest navy-and-orange MARC design. Use your existing project and address, **marc-store-iimt.vercel.app**. Customers shop, provide their details, enter the UPI reference and attach their screenshot on the MARC website. Google sign-in returns them to checkout.
 
-With the launch queue enabled, **Place order** saves the submission to private Vercel storage and shows **Saving your order**. One Apps Script worker saves each screenshot to the restricted Drive folder and writes the order to **MARC Website Orders**. The page shows **Order received** after both saves succeed. A separate background check picks up catalogue edits to the existing Form.
+With the launch queue enabled, **Place order** saves the submission to private Vercel storage and shows **Order submitted**. One Apps Script worker saves each screenshot to the restricted Drive folder and writes the order to **MARC Website Orders**. The page shows **Order submitted successfully** after both saves succeed. A separate background check picks up catalogue edits to the existing Form.
 
 ## Update a live MARC store
 
@@ -11,7 +11,7 @@ With the launch queue enabled, **Place order** saves the submission to private V
 3. In Vercel, open **Storage → Create Database → Blob**. Choose **Private** and connect it to your existing MARC project for **Production**. Confirm that `BLOB_READ_WRITE_TOKEN` appears in the project's environment variables. [Vercel Blob setup](https://vercel.com/docs/vercel-blob/private-storage)
 4. Upload the files inside `1-upload-to-github/` to the matching paths in the existing repository. Wait for the new Production deployment in Vercel. `MARC_ORDER_QUEUE_ENABLED` stays off during this deployment.
 5. In the Apps Script editor, run **installOrderQueue** and approve permissions. Confirm **Order queue worker is installed** in the execution log and **processOrderQueue** in **Triggers**. This checks that the script owner can reach the private storage from Apps Script.
-6. In **Vercel → Settings → Environment Variables**, set `MARC_ORDER_QUEUE_ENABLED` to `1` for **Production**, then redeploy that release. Place one authorised test order before sharing the launch link. Look for **Saving your order**, then **Order received**, one Sheet row and one private Drive screenshot. The **Paid with** and **Payment screenshot** columns should be present.
+6. In **Vercel → Settings → Environment Variables**, set `MARC_ORDER_QUEUE_ENABLED` to `1` for **Production**, then redeploy that release. Place one authorised test order before sharing the launch link. Look for **Order submitted**, then **Order submitted successfully**, one Sheet row and one private Drive screenshot. The **Paid with** and **Payment screenshot** columns should be present.
 
 Keep **Accepting responses** off while preparing a new collection. Activate it for the test order and publish the catalogue. The build log shows how many products are available.
 
@@ -25,7 +25,7 @@ Keep **Accepting responses** off while preparing a new collection. Activate it f
 
 Run `npm ci` and `npm run test:launch` with Node.js 24. The test sends 75 simultaneous **Place order** submissions, including screenshots of 1.5 MB and 4 MB, through the queue with simulated Vercel Blob and Google services. It verifies one order and one screenshot per submission, retries after a lost reply, and correct Sheet routing. `npm test` also runs the catalogue and checkout tests. Real processing time depends on the connected services.
 
-New student order numbers use the roll number and sequence, such as `MARC_260431_1`. Staff and Other orders use their group in place of the roll number. The sequence includes completed earlier orders with the same roll number. Earlier orders display their original reference. New screenshot filenames start with the roll number and customer name, followed by a unique order ID.
+The receipt displays the **Order ID**. For example, `MARC_0260010_2` is the second completed order from roll number `0260010` in this sales window, and `MARC_STAFF_12` is the twelfth completed staff order in the window. Each roll number has its own sequence. Staff buyers share one sequence. The next sales window starts at `_1` for each group when you use a new order spreadsheet. A retry of a saved order shows the original ID. New screenshot filenames start with the roll number or buyer group, the buyer's name and the unique order reference.
 
 Earlier orders saved with the user's IIM Trichy email can be linked through that address. For an older order placed with another email provider, open **My orders** while signed in on the original browser to link its saved receipt.
 
@@ -149,7 +149,7 @@ The storefront loads the latest published catalogue from Vercel. The customer ca
 1. Open your store in a private browser tab. Choose a size and **Add to bag**. Open the same product and click **Buy now**. The summary should show one selected item and keep the item in the earlier bag.
 2. Click **Continue with Google**. After the Google account step, confirm the browser returns to the MARC address. Check the customer’s verified email, phone and affiliation. Each PGPM cohort requires a roll number. **Staff** and **Other** hide it.
 3. Click **Continue to payment**. Confirm the amount and scan the QR to check the recipient reads **IIMT MART**. To test the screen without a payment, stop here or cancel the unpaid checkout.
-4. For the first authorized order, enter the real **12-digit UPI transaction ID**, attach a PNG, JPG or WebP screenshot up to **4 MB**, and click **Place order**. When the queue is enabled, **Saving your order** appears while the submission is in the queue. The page shows **Order received**, the order number and the submission time in IST after Google confirms the save.
+4. For the first authorized order, enter the real **12-digit UPI transaction ID**, attach a PNG, JPG or WebP screenshot up to **4 MB**, and click **Place order**. When the queue is enabled, **Order submitted** appears while the worker saves it. The page shows **Order submitted successfully**, the **Order ID** and the submission time in IST after Google confirms the save.
 5. In the configured order spreadsheet, open **MARC Website Orders**. Find the same reference. Check the timestamp (stored in UTC), contact and item details, UTR, **Under review** status and the **Payment screenshot** link. Open the link using a MARC account with access to the folder. Compare the actual UPI credit to the amount and reference, then record the verified status in the Sheet.
 6. Once previous checkouts are reconciled, switch the MARC buying links to the updated checkout on Vercel. The Form’s own Responses tab counts direct Google Form submissions. Website orders go to **MARC Website Orders**.
 

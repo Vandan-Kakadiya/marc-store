@@ -234,7 +234,7 @@ test('a duplicated transaction ID keeps one order and a private payment submissi
   assert.deepEqual(savedProof, f.png);
 });
 
-test('orders submitted across a collection change reach their original Sheets', async () => {
+test('orders use their original collection Sheet and its order ID sequence', async () => {
   const f = setup();
   const old = await f.quote();
   const priorCollection = f.state.deployed.collection;
@@ -254,6 +254,14 @@ test('orders submitted across a collection change reach their original Sheets', 
   assert.deepEqual(rowIds(f.orders), new Set([old.id, queuedLater.id]));
   assert.deepEqual(rowIds(nextBook.getSheetByName('MARC Website Orders')), new Set([next.id]));
   assert.equal(f.files.size, 3);
+  const [oldReceipt, nextReceipt, lateReceipt] = await Promise.all([old, next, queuedLater].map(async (order) => {
+    const response = await f.status(order);
+    assert.equal(response.status, 200);
+    return response.json();
+  }));
+  assert.equal(nextReceipt.number, 'MARC_0260010_1');
+  assert.deepEqual(new Set([oldReceipt.number, lateReceipt.number]),
+    new Set(['MARC_0260010_1', 'MARC_0260010_2']));
 });
 
 test('the queue fails safely when unavailable and rejects unsigned or expired worker requests', async () => {

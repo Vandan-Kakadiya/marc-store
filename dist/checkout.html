@@ -22,7 +22,7 @@
     <link rel="modulepreload" href="market-core.js?v=13" />
     <link rel="stylesheet" href="market.css?v=26" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=14"></script>
+    <script type="module" src="checkout.js?v=15"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -220,15 +220,15 @@
             </button>
           </section>
           <section id="pending-order" hidden>
-            <h2 id="pending-title" tabindex="-1">Saving your order</h2>
+            <h2 id="pending-title" tabindex="-1">Order submitted</h2>
             <p id="pending-message" role="status"></p>
             <p>Order reference <strong id="pending-reference"></strong></p>
           </section>
           <section id="receipt" hidden>
             <div class="receipt-mark" aria-hidden="true">✓</div>
-            <h2 tabindex="-1">Order received</h2>
+            <h2 tabindex="-1">Order submitted successfully</h2>
+            <p>Order ID <strong id="order-number"></strong></p>
             <p id="receipt-status"></p>
-            <p>Order number <strong id="order-number"></strong></p>
             <p>Submitted <time id="order-time"></time></p>
             <div class="receipt-items" id="receipt-items"></div>
             <a href="checkout.html?orders=1" id="back-to-orders" class="text-btn" hidden

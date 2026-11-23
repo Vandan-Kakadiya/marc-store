@@ -625,6 +625,42 @@ test('an outstanding six-digit roll order can be submitted after the update', as
   assert.equal(receipt.number, 'MARC_026001_1');
 });
 
+test('student and staff order IDs restart for each sales window', async () => {
+  const f = setup();
+  delete f.props.LEGACY_TAB;
+  f.script.checkOrderStorage();
+  f.state.deployed = f.catalogue();
+
+  async function order(cookie, affiliation, roll, utr) {
+    const quote = await f.json(await f.post(cookie, 'quote', {
+      ...f.quoteFields,
+      id: randomUUID(),
+      version: f.state.deployed.version,
+      contact: { ...f.quoteFields.contact, affiliation, roll }
+    }));
+    return f.json(await f.place(cookie, quote.token, utr));
+  }
+
+  const buyer = await f.login();
+  assert.equal((await order(buyer, 'PGPM 2026-28', '0260010', '200000000001')).number, 'MARC_0260010_1');
+  assert.equal((await order(buyer, 'PGPM 2026-28', '0260010', '200000000002')).number, 'MARC_0260010_2');
+  assert.equal((await order(buyer, 'PGPM 2026-28', '0260011', '200000000003')).number, 'MARC_0260011_1');
+  assert.equal((await order(buyer, 'Staff', '', '200000000004')).number, 'MARC_STAFF_1');
+  f.state.profile = { ...f.state.profile, sub: 'different-staff', email: 'staff@iimtrichy.ac.in' };
+  const anotherStaff = await f.login();
+  assert.equal((await order(anotherStaff, 'Staff', '', '200000000005')).number, 'MARC_STAFF_2');
+  const archivedRows = f.orders.rows.map((row) => [...row]);
+
+  f.newBook('next-collection');
+  f.props.RESPONSE_SHEET_ID = 'next-collection';
+  f.props.FORM_ID = 'next-form';
+  f.script.checkOrderStorage();
+  f.state.deployed = f.catalogue();
+  assert.equal((await order(buyer, 'PGPM 2026-28', '0260010', '200000000006')).number, 'MARC_0260010_1');
+  assert.equal((await order(anotherStaff, 'Staff', '', '200000000007')).number, 'MARC_STAFF_1');
+  assert.deepEqual(f.orders.rows, archivedRows);
+});
+
 test('sessions expire twenty minutes after sign-in for history and checkout', async (t) => {
   let now = Date.now();
   t.mock.method(Date, 'now', () => now);

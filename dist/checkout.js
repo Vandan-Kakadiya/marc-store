@@ -365,9 +365,7 @@ function openReceipt(entry) {
     $('summary-lines').replaceChildren(...rows);
   }
   $('summary-total').textContent = money(entry.total);
-  $('receipt-status').textContent = entry.paymentStatus
-    ? 'Payment status · ' + entry.paymentStatus
-    : 'Your order and screenshot were saved. MARC will verify your payment.';
+  $('receipt-status').textContent = 'Payment status · ' + (entry.paymentStatus || 'Under review');
   $('order-number').textContent = entry.number || entry.id;
   $('back-to-orders').hidden = !ordersMode;
   $('order-time').dateTime = entry.submittedAt;
@@ -484,11 +482,11 @@ async function myOrders(turn) {
         '',
         money(entry.total) + ' · ' + indiaTime.format(new Date(entry.submittedAt))
       ),
-      node('p', '', entry.number || entry.id),
+      node('p', '', 'Order ID ' + (entry.number || entry.id)),
       node('p', 'line-meta', entry.paymentStatus || 'Payment under review'),
       btn('View receipt', 'text-btn', () => openReceipt(entry))
     );
-    if (justSaved) row.prepend(node('p', 'line-meta', 'Order received'));
+    if (justSaved) row.prepend(node('p', 'line-meta', 'Order submitted successfully'));
   }
 
   function checkLater() {
