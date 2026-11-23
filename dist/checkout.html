@@ -19,10 +19,10 @@
       type="font/woff2"
       crossorigin
     />
-    <link rel="modulepreload" href="market-core.js?v=13" />
+    <link rel="modulepreload" href="market-core.js?v=14" />
     <link rel="stylesheet" href="market.css?v=26" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=15"></script>
+    <script type="module" src="checkout.js?v=16"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -220,13 +220,13 @@
             </button>
           </section>
           <section id="pending-order" hidden>
-            <h2 id="pending-title" tabindex="-1">Order submitted</h2>
+            <h2 id="pending-title" tabindex="-1">Order submitted successfully</h2>
             <p id="pending-message" role="status"></p>
-            <p>Order reference <strong id="pending-reference"></strong></p>
+            <p><span id="pending-id-label">Order ID</span> <strong id="pending-reference"></strong></p>
           </section>
           <section id="receipt" hidden>
             <div class="receipt-mark" aria-hidden="true">✓</div>
-            <h2 tabindex="-1">Order submitted successfully</h2>
+            <h2 tabindex="-1">Order received successfully</h2>
             <p>Order ID <strong id="order-number"></strong></p>
             <p id="receipt-status"></p>
             <p>Submitted <time id="order-time"></time></p>

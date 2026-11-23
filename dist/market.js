@@ -1,6 +1,7 @@
 import {
   $,
   BAG,
+  bagSignedIn,
   DRAFT,
   btn,
   cachedCatalogue,
@@ -14,8 +15,9 @@ import {
   picture,
   publishedCatalogue,
   read,
-  save
-} from './market-core.js?v=13';
+  save,
+  syncBag
+} from './market-core.js?v=14';
 const published = publishedCatalogue();
 let catalog = published || cachedCatalogue(),
   bag = getBag(),
@@ -587,6 +589,26 @@ function begin(flow, items) {
   }
   location.assign('checkout.html');
 }
+function bagSignIn() {
+  return btn('Sign in to sync your bag', 'text-btn', () =>
+    location.assign('/api/auth/start?shop=1')
+  );
+}
+let bagRefresh;
+function refreshBag() {
+  if (!configured || bagRefresh) return bagRefresh;
+  const previous = JSON.stringify([bagSignedIn(), getBag()]);
+  bagRefresh = syncBag().then((items) => {
+    bag = items;
+    $('bag-count').textContent = count();
+    if ($('bag').open && previous !== JSON.stringify([bagSignedIn(), items])) renderBag();
+  }).catch((error) => {
+    if ($('bag').open) toast(error.message);
+  }).finally(() => {
+    bagRefresh = null;
+  });
+  return bagRefresh;
+}
 function renderBag() {
   const out = $('bag-body');
   out.replaceChildren();
@@ -599,6 +621,7 @@ function renderBag() {
         location.hash = 'shop';
       })
     );
+    if (configured && !bagSignedIn()) out.append(bagSignIn());
     return;
   }
   let total = 0,
@@ -652,6 +675,7 @@ function renderBag() {
   );
   check.disabled = missing || !allowsOrder() || count() > catalog.limit;
   out.append(check);
+  if (configured && !bagSignedIn()) out.append(bagSignIn());
   if (missing || count() > catalog.limit)
     out.append(
       node('p', 'status', 'Adjust the items in your bag before checkout.')
@@ -660,6 +684,7 @@ function renderBag() {
 $('open-bag').onclick = () => {
   renderBag();
   $('bag').showModal();
+  void refreshBag();
 };
 $('retry').onclick = refresh;
 for (const d of document.querySelectorAll('dialog'))
@@ -686,10 +711,16 @@ window.addEventListener('storage', (e) => {
   }
 });
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && Date.now() - refreshTime > 15000) refresh();
+  if (!document.hidden) {
+    void refreshBag();
+    if (Date.now() - refreshTime > 15000) refresh();
+  }
 });
 window.addEventListener('pageshow', (e) => {
-  if (e.persisted) refresh();
+  if (e.persisted) {
+    void refreshBag();
+    refresh();
+  }
 });
 setInterval(() => {
   if (!document.hidden) refresh();
@@ -703,3 +734,8 @@ function hideStartupLoader() {
 repaint();
 if (published || catalog.skus.length || !configured) hideStartupLoader();
 if (!published) refresh().finally(hideStartupLoader);
+
+void refreshBag();
+setInterval(() => {
+  if (!document.hidden && bagSignedIn()) void refreshBag();
+}, 30000);

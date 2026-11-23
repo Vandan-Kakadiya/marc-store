@@ -13,8 +13,10 @@ import {
   picture,
   post,
   read,
-  save
-} from './market-core.js?v=13';
+  resetAccountBag,
+  save,
+  syncBag
+} from './market-core.js?v=14';
 
 const legacyReceiptKey = 'marc-vercel-receipts-v1';
 const path = new URL(location.href);
@@ -41,7 +43,7 @@ let draft = read(sessionStorage, DRAFT, null),
 const ordersMode =
   path.searchParams.get('orders') === '1' || !draft?.items?.length;
 let loadCount = 0;
-let sessionTimer, sessionEndsAt;
+let sessionTimer, sessionEndsAt, sessionCheckTimer, checkingSession = false;
 let googleLoaderTimer, googleRetryTimer;
 let statusTimer;
 
@@ -85,11 +87,13 @@ function startGoogleSignIn() {
   }
 }
 function expireSession(
-  text = 'Your 20-minute session ended. Sign in with Google to continue.'
+  text = 'Your MARC session ended. Sign in with Google to continue.'
 ) {
   ++loadCount;
   clearTimeout(sessionTimer);
+  clearTimeout(sessionCheckTimer);
   clearTimeout(statusTimer);
+  resetAccountBag();
   user = null;
   order = null;
   sessionEndsAt = 0;
@@ -100,14 +104,36 @@ function expireSession(
   $('proof-form').reset();
   $('past-orders').replaceChildren();
   $('order-number').textContent = '';
+  $('pending-reference').textContent = '';
   $('order-time').textContent = '';
   $('order-time').removeAttribute('datetime');
   summary([]);
   showSignIn();
   message(text);
 }
-function checkSessionExpiry() {
-  if (user && sessionEndsAt && Date.now() >= sessionEndsAt) expireSession();
+function scheduleSessionCheck() {
+  clearTimeout(sessionCheckTimer);
+  sessionCheckTimer = setTimeout(checkSession, 30000);
+}
+async function checkSession() {
+  if (!user) return;
+  if (Date.now() >= sessionEndsAt) {
+    expireSession();
+    return;
+  }
+  if (document.hidden || checkingSession) return;
+  const turn = loadCount;
+  checkingSession = true;
+  try {
+    const info = await api('session');
+    if (turn === loadCount && info.user?.email !== user.email)
+      expireSession('This MARC session ended. Sign in with Google to continue.');
+  } catch {
+    // A temporary connection problem does not end a session.
+  } finally {
+    checkingSession = false;
+    if (user && !document.hidden) scheduleSessionCheck();
+  }
 }
 function setOrderProgress(percent) {
   const ring = $('order-progress-ring');
@@ -374,6 +400,7 @@ function openReceipt(entry) {
   $('receipt').querySelector('h2').focus({ preventScroll: true });
 }
 async function finishSubmission(saved, turn) {
+  if (turn !== loadCount) return;
   if (saved.id !== draft?.id || !saved.token)
     throw Error('The order save could not be confirmed.');
   const completed = { ...draft, receipt: saved.token };
@@ -399,25 +426,32 @@ function pollOrder(turn) {
   clearTimeout(statusTimer);
   statusTimer = setTimeout(() => checkSubmission(turn), 12000 + Math.random() * 6000);
 }
+function queuedTitle(number) {
+  return number ? 'Order submitted successfully' : 'Checking your order…';
+}
+function rememberQueuedOrder(number) {
+  if (draft.queued && (!number || draft.queuedNumber === number)) return;
+  draft = { ...draft, queued: true, ...(number ? { queuedNumber: number } : {}) };
+  save(sessionStorage, DRAFT, draft);
+}
 function showPendingOrder(entry, turn) {
-  if (!draft.queued) {
-    draft = { ...draft, queued: true };
-    save(sessionStorage, DRAFT, draft);
-  }
-
+  rememberQueuedOrder(entry.number);
+  const number = entry.number || draft.queuedNumber;
   const needsAttention = entry.status === 'needs_attention';
-  const focus = $('pending-order').hidden;
   const title = $('pending-title');
+  const heading = needsAttention ? 'Order needs attention' : queuedTitle(number);
+  const focus = $('pending-order').hidden || title.textContent !== heading;
   const detail = $('pending-message');
   const reference = $('pending-reference');
 
   orderProgress.close();
   proof.proof.value = '';
-  title.textContent = needsAttention ? 'Order needs attention' : 'Order submitted';
+  title.textContent = heading;
   detail.textContent = needsAttention ? entry.message : '';
   detail.hidden = !needsAttention;
-  reference.textContent = needsAttention ? entry.id : '';
-  reference.parentElement.hidden = !needsAttention;
+  $('pending-id-label').textContent = number ? 'Order ID' : 'Order reference';
+  reference.textContent = number || (needsAttention ? entry.id : '');
+  reference.parentElement.hidden = !reference.textContent;
 
   show('pending-order');
   summary(entry.lines, true);
@@ -469,7 +503,7 @@ async function myOrders(turn) {
 
   out.replaceChildren(list);
   if (current) {
-    title = node('strong', '', accepted ? 'Order submitted' : 'Checking your order…');
+    title = node('strong', '', queuedTitle());
     current.setAttribute('aria-live', 'polite');
     current.append(title);
     out.prepend(current);
@@ -486,7 +520,7 @@ async function myOrders(turn) {
       node('p', 'line-meta', entry.paymentStatus || 'Payment under review'),
       btn('View receipt', 'text-btn', () => openReceipt(entry))
     );
-    if (justSaved) row.prepend(node('p', 'line-meta', 'Order submitted successfully'));
+    if (justSaved) row.prepend(node('p', 'line-meta', 'Order received successfully'));
   }
 
   function checkLater() {
@@ -511,13 +545,13 @@ async function myOrders(turn) {
 
       if (entry.status === 'processing') {
         accepted = true;
-        if (!draft.queued) {
-          draft = { ...draft, queued: true };
-          save(sessionStorage, DRAFT, draft);
-        }
-        if (title.textContent !== 'Order submitted') {
-          title.textContent = 'Order submitted';
+        rememberQueuedOrder(entry.number);
+        const number = entry.number || draft.queuedNumber;
+        const heading = queuedTitle(number);
+        if (title.textContent !== heading) {
+          title.textContent = heading;
           current.replaceChildren(title);
+          if (number) current.append(node('p', 'line-meta', 'Order ID ' + number));
         }
         checkLater();
       } else if (entry.status === 'needs_attention') {
@@ -592,6 +626,7 @@ async function myOrders(turn) {
 async function boot() {
   const turn = ++loadCount;
   clearTimeout(statusTimer);
+  clearTimeout(sessionCheckTimer);
   const requestedAt = Date.now();
   $('google').disabled = true;
   $('continue-payment').disabled = true;
@@ -616,6 +651,7 @@ async function boot() {
     user = info.user;
     $('google').disabled = !info.loginReady;
     if (!user) {
+      resetAccountBag();
       sessionEndsAt = 0;
       showSignIn();
       if (!info.loginReady) message('MARC is setting up Google sign-in.');
@@ -628,6 +664,8 @@ async function boot() {
       return;
     }
     sessionTimer = setTimeout(expireSession, timeLeft);
+    scheduleSessionCheck();
+    void syncBag().catch(() => {});
     if (ordersMode) {
       await myOrders(turn);
       return;
@@ -684,9 +722,9 @@ for (const role of affiliations) fields.affiliation.add(new Option(role, role));
 fields.affiliation.onchange = updateRoll;
 proof.paidWith.onchange = updateReferenceField;
 $('retry-checkout').onclick = boot;
-window.addEventListener('pageshow', checkSessionExpiry);
+window.addEventListener('pageshow', checkSession);
 window.addEventListener('pagehide', resetGoogleSignIn);
-document.addEventListener('visibilitychange', checkSessionExpiry);
+document.addEventListener('visibilitychange', checkSession);
 orderProgress.addEventListener('cancel', (event) => event.preventDefault());
 googleProgress.addEventListener('cancel', (event) => event.preventDefault());
 googleButton.onclick = startGoogleSignIn;
@@ -695,6 +733,7 @@ for (const id of ['switch-account', 'switch-order-account']) {
   $(id).onclick = async () => {
     try {
       await post('logout');
+      resetAccountBag();
       contactForm.reset();
       location.assign('checkout.html' + (ordersMode ? '?orders=1' : ''));
     } catch (e) {

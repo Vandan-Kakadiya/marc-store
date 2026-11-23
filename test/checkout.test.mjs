@@ -60,7 +60,7 @@ const setup = () => {
     );
     const ct = response.headers.getSetCookie()[1];
     assert.match(ct, /Secure; HttpOnly; SameSite=Lax/);
-    assert.match(ct, /Max-Age=1200$/);
+    assert.match(ct, /Max-Age=3600$/);
     return cookieValue(ct);
   }
   const json = async (response, status = 200) => {
@@ -93,7 +93,7 @@ const setup = () => {
   };
   return { ...store, login, call, json, post, quoteFields, place, png };
 };
-test('checkout login, contact and quoted price complete without an Apps Script request', async () => {
+test('checkout quotes prices from the published catalogue without saving an order', async () => {
   const f = setup(),
     { state, login, call, json, post, quoteFields } = f;
   assert.equal((await json(await call('session'))).user, null);
@@ -591,9 +591,8 @@ test('My orders reads shared receipts, migrates old rows, and protects ownership
   orders.rows[2][2] = 'Verified';
   const deviceB = await login();
   assert.notEqual(deviceA, deviceB);
-  const fromPhone = await history(deviceA);
+  await history(deviceA, [], 401);
   const fromLaptop = await history(deviceB);
-  assert.deepEqual(fromPhone, fromLaptop);
   assert.equal(fromLaptop[0].number, receipt.number);
   assert.equal(fromLaptop[0].paymentStatus, 'Verified');
   assert.deepEqual(fromLaptop[0].lines, receipt.lines);
@@ -661,7 +660,7 @@ test('student and staff order IDs restart for each sales window', async () => {
   assert.deepEqual(f.orders.rows, archivedRows);
 });
 
-test('sessions expire twenty minutes after sign-in for history and checkout', async (t) => {
+test('sessions expire one hour after sign-in for history and checkout', async (t) => {
   let now = Date.now();
   t.mock.method(Date, 'now', () => now);
   const { env, script, call, login, json, post, quoteFields } = setup();
@@ -669,8 +668,8 @@ test('sessions expire twenty minutes after sign-in for history and checkout', as
   const cookie = await login();
   const session = async () => json(await call('session', { headers: { cookie } }));
   const info = await session();
-  assert.equal(info.sessionRemainingMs, 1200000);
-  now += 1199999;
+  assert.equal(info.sessionRemainingMs, 3600000);
+  now += 3599999;
   assert.equal((await session()).sessionRemainingMs, 1);
   await json(await post(cookie, 'history', {}));
   now += 1;
@@ -684,6 +683,40 @@ test('sessions expire twenty minutes after sign-in for history and checkout', as
     'buyer session', env.MARC_SESSION_KEY
   );
   assert.equal((await json(await call('session', { headers: { cookie: legacy } }))).user, null);
+});
+
+test('the latest Google sign-in replaces the older device and carries over its account bag', async () => {
+  const f = setup();
+  const { call, json, login, post, state } = f;
+  const bag = async (cookie, status = 200) => json(await call('bag', { headers: { cookie } }), status);
+  const device = async (cookie) => json(await call('session', { headers: { cookie } }));
+  const phone = await login();
+  const empty = await bag(phone);
+  const update = { ...empty, change: randomUUID(), items: [{ sku: 'POLO-W-M', qty: 2 }] };
+  const saved = await json(await post(phone, 'bag', update));
+
+  const desktop = await login();
+  assert.equal((await device(phone)).user, null);
+  await bag(phone, 401);
+  await json(await post(phone, 'bag', { ...update, items: [] }), 401);
+  await json(await post(phone, 'logout', {}));
+  assert.equal((await device(desktop)).user.email, state.profile.email);
+  assert.deepEqual(await bag(desktop), saved);
+
+  const adjusted = await json(await post(desktop, 'bag', {
+    ...saved, change: randomUUID(), items: [{ sku: 'POLO-W-M', qty: 1 }]
+  }));
+  await json(await post(desktop, 'bag', { ...update, change: randomUUID() }), 409);
+  assert.deepEqual(await json(await post(desktop, 'bag', update)), adjusted);
+  await json(await post(desktop, 'logout', {}));
+  assert.equal((await device(desktop)).user, null);
+
+  const sameAccountAgain = await login();
+  assert.deepEqual(await bag(sameAccountAgain), adjusted);
+  state.profile = { ...state.profile, sub: 'different-buyer', email: 'other@iimtrichy.ac.in' };
+  const other = await login();
+  assert.deepEqual((await bag(other)).items, []);
+  await json(await post(other, 'bag', { ...adjusted, change: randomUUID() }), 401);
 });
 
 test('signed order endpoint rejects unsigned, changed and expired requests', () => {

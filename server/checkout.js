@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   CheckoutError,
   fail,
@@ -14,9 +15,13 @@ import {
   unseal
 } from './common.js';
 import { loginReady, getUser, logout } from './auth.js';
+import { createAccountStore } from './account-store.js';
+import { readBag, writeBag } from './bag.js';
 import { callScript, scriptEndpoint } from './script-client.js';
 import { validateCatalogue } from './catalogue.js';
-import { enqueueOrder, queueKey, queuedStatus, queueStore } from './order-queue.js';
+import {
+  enqueueOrder, queueKey, queuedNumber, queuedStatus, queueStore, rememberQueuedNumber
+} from './order-queue.js';
 import { upiOrder, upiQr } from './upi.js';
 
 const groups = [
@@ -43,8 +48,27 @@ function storageReady(env) {
 function queueEnabled(env) {
   return env.MARC_ORDER_QUEUE_ENABLED === '1';
 }
-function queuedResponse(quote) {
-  return json({ id: quote.id, total: quote.total, lines: quote.lines, status: 'processing' }, 202);
+function queuedResponse(quote, number) {
+  return json({
+    id: quote.id, total: quote.total, lines: quote.lines, status: 'processing',
+    ...(orderNumberPattern.test(number || '') ? { number } : {})
+  }, 202);
+}
+async function reserveQueuedNumber(store, key, env, fetcher, order, bytes) {
+  try {
+    const previous = await queuedNumber(store, key);
+    if (orderNumberPattern.test(previous)) return previous;
+    const proofHash = createHash('sha256').update(bytes).digest('hex');
+    const reserved = await callScript(env, 'reserveQueuedOrder', { order, proofHash }, fetcher, 18000);
+    const number = reserved.ok ? reserved.data?.number : '';
+    if (!orderNumberPattern.test(number || '')) return '';
+    // Another request may already have saved the same reservation.
+    await rememberQueuedNumber(store, key, number).catch(() => {});
+    return number;
+  } catch {
+    // The proof is durable. The worker can reserve the same number and finish.
+    return '';
+  }
 }
 function contactInfo(data, buyer) {
   const name = requiredText(data?.name, 120, 'your full name');
@@ -250,13 +274,16 @@ async function submit(req, env, buyer, fetcher, store) {
   let result;
   if (quote.queued || queueEnabled(env)) {
     if (!env.BLOB_READ_WRITE_TOKEN) fail(503, 'MARC is setting up order storage.');
+    const key = queueKey(env, quote);
     try {
-      result = await enqueueOrder(store, queueKey(env, quote), order, bytes);
+      result = await enqueueOrder(store, key, order, bytes);
     } catch (e) {
       if (e instanceof CheckoutError) throw e;
       fail(503, 'We could not confirm the upload yet. Check this order again or retry with the same UTR and screenshot. Pay only once.');
     }
-    return result.pending ? queuedResponse(quote) : orderResult(result, quote, env, buyer);
+    if (!result.pending) return orderResult(result, quote, env, buyer);
+    const number = await reserveQueuedNumber(store, key, env, fetcher, order, bytes);
+    return queuedResponse(quote, number);
   }
   try {
     order.proof.base64 = bytes.toString('base64');
@@ -359,7 +386,9 @@ async function orderHistory(body, env, buyer, fetcher) {
   return json(result.data);
 }
 
-export function createCheckout({ env, fetcher = fetch, store = queueStore(env) }) {
+export function createCheckout({
+  env, fetcher = fetch, store = queueStore(env), accounts = createAccountStore(env, fetcher)
+}) {
   return async (req) => {
     try {
       const url = new URL(req.url),
@@ -368,7 +397,7 @@ export function createCheckout({ env, fetcher = fetch, store = queueStore(env) }
       if (!origin || url.origin !== origin)
         fail(503, 'Open the official MARC store address.');
       if (req.method === 'GET' && action === 'session') {
-        const buyer = getUser(req, env);
+        const buyer = await getUser(req, env, accounts);
         return json({
           user: buyer ? { name: buyer.name, email: buyer.email } : null,
           sessionRemainingMs: buyer ? Math.max(0, buyer.expires - Date.now()) : 0,
@@ -376,11 +405,16 @@ export function createCheckout({ env, fetcher = fetch, store = queueStore(env) }
           storageReady: storageReady(env) && (!queueEnabled(env) || !!env.BLOB_READ_WRITE_TOKEN)
         });
       }
+      if (req.method === 'GET' && action === 'bag') {
+        const buyer = await getUser(req, env, accounts);
+        if (!buyer) fail(401, 'Sign in with Google to sync your bag.');
+        return json(await readBag(accounts, env, buyer));
+      }
       if (req.method !== 'POST') fail(405, 'Open checkout to continue.');
       if (req.headers.get('origin') !== origin)
         fail(403, 'Open checkout on the MARC website.');
-      if (action === 'logout') return logout();
-      const buyer = getUser(req, env);
+      if (action === 'logout') return await logout(req, env, accounts);
+      const buyer = await getUser(req, env, accounts);
       if (!buyer) fail(401, 'Sign in with Google to continue.');
       if (action === 'place') return await submit(req, env, buyer, fetcher, store);
       const maxJSON =
@@ -393,6 +427,8 @@ export function createCheckout({ env, fetcher = fetch, store = queueStore(env) }
               : 22000;
       const body = await readJSON(req, maxJSON);
       switch (action) {
+        case 'bag':
+          return json(await writeBag(accounts, env, buyer, body));
         case 'quote': {
           if (!storageReady(env) || (queueEnabled(env) && !env.BLOB_READ_WRITE_TOKEN))
             fail(503, 'MARC is setting up order storage.');
@@ -440,7 +476,7 @@ export function createCheckout({ env, fetcher = fetch, store = queueStore(env) }
           }
           const result = await queuedStatus(store, queueKey(env, quote));
           if (!result) return json({ id: quote.id, status: 'not_submitted' });
-          if (result.pending) return queuedResponse(quote);
+          if (result.pending) return queuedResponse(quote, result.number);
           if (!result.ok) return json({
             id: quote.id,
             total: quote.total,

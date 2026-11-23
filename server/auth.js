@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { accountKey, createAccountStore, sessionSeconds } from './account-store.js';
 import {
   CheckoutError,
   fail,
@@ -12,8 +13,7 @@ import {
 
 const stateCookie = '__Host-marc-vercel-login';
 const sessionCookie = '__Host-marc-vercel-user';
-const sessionPurpose = 'buyer session v2';
-const sessionSeconds = 20 * 60;
+const sessionPurpose = 'buyer session v3';
 const callbackPath = '/api/auth/callback';
 const instituteDomain = 'iimtrichy.ac.in';
 
@@ -56,16 +56,36 @@ export function loginReady(env) {
     env.GOOGLE_CLIENT_SECRET
   );
 }
-export function getUser(req, env) {
+function sessionFromCookie(req, env) {
   const user = unseal(
     getCookie(req, sessionCookie),
     sessionPurpose,
     env.MARC_SESSION_KEY || '',
     3600
   );
-  return user?.googleEmail === true && instituteEmail(user.email) ? user : null;
+  return user?.googleEmail === true && instituteEmail(user.email) &&
+    /^[A-Za-z0-9_-]{43}$/.test(user.sessionId || '') ? user : null;
 }
-export function logout() {
+async function activeSession(accounts, key) {
+  try {
+    return await accounts.read('session', key);
+  } catch {
+    fail(503, 'MARC could not check your sign-in. Try again shortly.');
+  }
+}
+export async function getUser(req, env, accounts) {
+  const user = sessionFromCookie(req, env);
+  if (!user) return null;
+  const active = await activeSession(accounts, accountKey(env, user));
+  return active?.value.id === user.sessionId ? user : null;
+}
+export async function logout(req, env, accounts) {
+  const user = sessionFromCookie(req, env);
+  if (user) {
+    const key = accountKey(env, user);
+    const active = await activeSession(accounts, key);
+    if (active?.value.id === user.sessionId) await accounts.remove('session', key, active.version);
+  }
   return json({ ok: true }, 200, {
     'set-cookie': setCookie(sessionCookie, '', 0)
   });
@@ -97,7 +117,7 @@ function loginError(error) {
     }
   );
 }
-export function createAuth({ env, fetcher = fetch }) {
+export function createAuth({ env, fetcher = fetch, accounts = createAccountStore(env, fetcher) }) {
   return {
     async start(req) {
       try {
@@ -108,9 +128,11 @@ export function createAuth({ env, fetcher = fetch }) {
           .update(verifier)
           .digest('base64url');
         const back =
-          current.searchParams.get('orders') === '1'
-            ? '/checkout.html?orders=1'
-            : '/checkout.html';
+          current.searchParams.get('shop') === '1'
+            ? '/#shop'
+            : current.searchParams.get('orders') === '1'
+              ? '/checkout.html?orders=1'
+              : '/checkout.html';
         const token = seal(
           { state, verifier, back, expires: Date.now() + 600000 },
           'google login',
@@ -200,9 +222,13 @@ export function createAuth({ env, fetcher = fetch }) {
           fail(403, 'Use a Google account with a verified email address.');
         if (!instituteEmail(email) || typeof hd !== 'string' || hd.toLowerCase() !== instituteDomain)
           fail(403, 'Sign in with your IIM Trichy Google account.');
+        const sessionId = secret();
+        const registered = await accounts.write('session', accountKey(env, { sub }), { id: sessionId });
+        if (!registered) fail(503, 'MARC could not save your sign-in. Try again shortly.');
         const session = seal(
           {
             sub,
+            sessionId,
             email,
             googleEmail: true,
             name: typeof name === 'string' ? name.slice(0, 120) : '',

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createCheckout } from '../server/checkout.js';
-import { seal } from '../server/common.js';
+import { seal, secret } from '../server/common.js';
+import { accountKey } from '../server/account-store.js';
 import { createQueueWorker } from '../server/order-queue.js';
 import { googleFixture } from './google-fixture.mjs';
 
@@ -48,12 +49,26 @@ function setup() {
   script.checkOrderStorage();
   state.deployed = f.catalogue();
   const store = privateStore();
-  const checkout = createCheckout({ env, fetcher, store });
+  const sessions = new Map(), cookies = new Map();
+  const accounts = {
+    async read(kind, key) { return sessions.get(key) || null; },
+    async remove(kind, key, version) {
+      if (sessions.get(key)?.version === version) sessions.delete(key);
+    }
+  };
+  const checkout = createCheckout({ env, fetcher, store, accounts });
   const worker = createQueueWorker({ env, store });
-  const buyer = (sub = 'buyer-1') => '__Host-marc-vercel-user=' + seal({
-    sub, googleEmail: true, name: 'Buyer ' + sub, email: sub + '@iimtrichy.ac.in',
-    expires: Date.now() + 20 * 60000
-  }, 'buyer session v2', env.MARC_SESSION_KEY);
+  function signIn(sub) {
+    const sessionId = secret();
+    sessions.set(accountKey(env, { sub }), { version: sessionId, value: { id: sessionId } });
+    const cookie = '__Host-marc-vercel-user=' + seal({
+      sub, sessionId, googleEmail: true, name: 'Buyer ' + sub, email: sub + '@iimtrichy.ac.in',
+      expires: Date.now() + 3600000
+    }, 'buyer session v3', env.MARC_SESSION_KEY);
+    cookies.set(sub, cookie);
+    return cookie;
+  }
+  const buyer = (sub = 'buyer-1') => cookies.get(sub) || signIn(sub);
   const origin = env.MARC_SITE_URL;
   const post = (action, body, cookie = buyer()) => checkout(new Request(
     origin + '/api/checkout?action=' + action, {
@@ -140,7 +155,7 @@ function setup() {
     for (const ack of acknowledgements) assert.equal((await workerPost(ack)).status, 204);
     return acknowledgements;
   }
-  return { ...f, store, quote, fields, place, buyer, post, status, work, envelope, workerPost, install, drain, png };
+  return { ...f, store, quote, fields, place, buyer, signIn, post, status, work, envelope, workerPost, install, drain, png };
 }
 
 test('75 simultaneous Place order requests finish once each with one Apps Script worker', { timeout: 45000 }, async () => {
@@ -157,11 +172,17 @@ test('75 simultaneous Place order requests finish once each with one Apps Script
   const statuses = await Promise.all(sent.map(async (response) => ({ code: response.status, data: await response.json() })));
   assert.equal(statuses.filter(({ code, data }) => code === 202 && data.status === 'processing').length, count);
   assert.equal(f.state.orderCalls, 0);
-  assert.equal(f.orders.rows.length, 1);
+  assert.equal(f.orders.rows.length - 1, count);
+  assert.ok(f.orders.rows.slice(1).every((row) => !row[1] && !row[11]));
   assert.equal(f.files.size, 0);
+  const numbers = statuses.map(({ data }) => data.number);
+  assert.deepEqual(new Set(numbers),
+    new Set(Array.from({ length: count }, (_, i) => 'MARC_0260010_' + (i + 1))));
   assert.equal((await f.status(quotes[0], f.buyer('buyer-1'))).status, 403);
   assert.equal((await f.status(quotes[0], '')).status, 401);
-  assert.equal((await f.status(quotes[0], f.buyer('buyer-0'))).status, 202);
+  const queued = await f.status(quotes[0], f.buyer('buyer-0'));
+  assert.equal(queued.status, 202);
+  assert.equal((await queued.json()).number, numbers[0]);
   const drained = await f.drain({ testLease: true });
   assert.equal(drained.length, count);
   assert.equal(f.files.size, count);
@@ -178,7 +199,7 @@ test('75 simultaneous Place order requests finish once each with one Apps Script
     assert.ok(data.token);
     return data;
   }));
-  assert.equal(new Set(results.map(({ number }) => number)).size, count);
+  assert.deepEqual(results.map(({ number }) => number), numbers);
 });
 
 test('retrying an upload, a lost Drive result and a failed pending cleanup keep the same receipt', async () => {
@@ -187,7 +208,9 @@ test('retrying an upload, a lost Drive result and a failed pending cleanup keep 
   f.store.state.loseWriteReply = true;
   const same = await Promise.all(Array.from({ length: 5 }, () => f.place(order, 80)));
   assert.ok(same.every((reply) => reply.status === 202));
-  assert.equal(f.store.blobs.size, 1);
+  const accepted = await Promise.all(same.map((response) => response.json()));
+  assert.deepEqual(new Set(accepted.map(({ number }) => number)), new Set(['MARC_0260010_1']));
+  assert.equal(f.store.blobs.size, 2);
   assert.equal((await f.place(order, 81)).status, 409);
   f.state.driveFailure = true;
   assert.equal((await f.drain()).length, 0);
@@ -214,7 +237,7 @@ test('retrying an upload, a lost Drive result and a failed pending cleanup keep 
   assert.equal(retry.submittedAt, receipt.submittedAt);
   assert.equal(f.orders.rows.length, 2);
   assert.equal(f.files.size, 1);
-  assert.equal(f.store.blobs.size, 1);
+  assert.equal(f.store.blobs.size, 2);
 });
 
 test('a duplicated transaction ID keeps one order and a private payment submission for review', async () => {
@@ -262,6 +285,42 @@ test('orders use their original collection Sheet and its order ID sequence', asy
   assert.equal(nextReceipt.number, 'MARC_0260010_1');
   assert.deepEqual(new Set([oldReceipt.number, lateReceipt.number]),
     new Set(['MARC_0260010_1', 'MARC_0260010_2']));
+});
+
+test('a queued order keeps its MARC ID and saves after the buyer signs out', async () => {
+  const f = setup();
+  const desktop = f.buyer('buyer-1');
+  const order = await f.quote(desktop);
+  const pending = await f.place(order, 120, f.png, desktop);
+  assert.equal(pending.status, 202);
+  const submitted = await pending.json();
+  assert.equal(submitted.number, 'MARC_0260010_1');
+  assert.equal((await f.post('logout', {}, desktop)).status, 200);
+  assert.equal((await f.status(order, desktop)).status, 401);
+
+  await f.drain();
+  const phone = f.signIn('buyer-1');
+  const saved = await (await f.status(order, phone)).json();
+  assert.equal(saved.number, submitted.number);
+  assert.equal(saved.status, 'under_review');
+  const [history] = await (await f.post('history', {}, phone)).json();
+  assert.equal(history.number, submitted.number);
+});
+
+test('the queue retains the proof when the early reservation is temporarily unavailable', async () => {
+  const f = setup();
+  const original = f.script.reserveQueuedOrder_;
+  f.script.reserveQueuedOrder_ = () => ({ ok: false, code: 'busy' });
+  const order = await f.quote();
+  const pending = await f.place(order, 121);
+  assert.equal(pending.status, 202);
+  assert.equal((await pending.json()).number, undefined);
+  f.script.reserveQueuedOrder_ = original;
+
+  await f.drain();
+  const saved = await (await f.status(order)).json();
+  assert.equal(saved.number, 'MARC_0260010_1');
+  assert.ok(saved.token);
 });
 
 test('the queue fails safely when unavailable and rejects unsigned or expired worker requests', async () => {

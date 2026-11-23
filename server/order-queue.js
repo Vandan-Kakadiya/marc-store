@@ -5,6 +5,7 @@ import { fail, json, orderPattern, readJSON, sha256Pattern, siteURL } from './co
 const root = 'marc/orders/v1/';
 const pendingPath = (key) => `${root}pending/${key}.bin`;
 const resultPath = (key) => `${root}results/${key}.json`;
+const numberPath = (key) => `${root}numbers/${key}.txt`;
 const conflicts = ['reference_in_use', 'retry_different'];
 const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
 
@@ -53,10 +54,19 @@ async function readResult(store, key) {
   return stream ? new Response(stream).json() : null;
 }
 
+export async function queuedNumber(store, key) {
+  const stream = await store.get(numberPath(key));
+  return stream ? new Response(stream).text() : '';
+}
+
+export function rememberQueuedNumber(store, key, number) {
+  return store.put(numberPath(key), number, 'text/plain', 8);
+}
+
 export async function queuedStatus(store, key) {
   const result = await readResult(store, key);
   if (result) return result;
-  if (await store.has(pendingPath(key))) return { pending: true };
+  if (await store.has(pendingPath(key))) return { pending: true, number: await queuedNumber(store, key) };
   // Completion writes the result before removing the pending file.
   return await readResult(store, key);
 }

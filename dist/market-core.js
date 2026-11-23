@@ -53,11 +53,86 @@ function bagState() {
     settled: Array.isArray(current?.settled) ? current.settled : []
   };
 }
+let accountBag = null;
+let bagKnown = !configured;
+let bagGeneration = 0;
+let bagWork = Promise.resolve();
+
 export function getBag() {
-  return bagState().items;
+  return accountBag?.items ?? bagState().items;
 }
-export async function changeBag(reduce, orderId = null) {
-  const change = () => {
+export function bagSignedIn() {
+  return !!accountBag;
+}
+export function resetAccountBag() {
+  bagGeneration++;
+  accountBag = null;
+  bagKnown = !configured;
+}
+function withBagLock(change) {
+  if (globalThis.navigator?.locks) return navigator.locks.request(BAG, change);
+  const next = bagWork.then(change);
+  bagWork = next.catch(() => {});
+  return next;
+}
+async function readAccountBag() {
+  const generation = bagGeneration;
+  try {
+    const remote = await api('bag');
+    if (generation !== bagGeneration) return;
+    accountBag = remote;
+  } catch (error) {
+    if (generation !== bagGeneration) return;
+    if (error.status !== 401) throw error;
+    accountBag = null;
+  }
+  bagKnown = true;
+}
+async function updateAccountBag(reduce, change) {
+  const owner = accountBag.owner;
+  const generation = bagGeneration;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (accountBag?.owner !== owner) throw Error('Sign in again to update your account bag.');
+    const items = reduce(accountBag.items.map((row) => ({ ...row })));
+    try {
+      const saved = await post('bag', { owner, version: accountBag.version, change, items });
+      if (generation === bagGeneration) accountBag = saved;
+      return getBag();
+    } catch (error) {
+      if (generation !== bagGeneration) throw error;
+      if (error.status === 401) {
+        resetAccountBag();
+        throw error;
+      }
+      if (attempt === 2 || (error.status && error.status !== 409 && error.status < 500))
+        throw error;
+      await readAccountBag();
+    }
+  }
+}
+async function refreshAccountBag() {
+  if (!configured) return getBag();
+  const generation = bagGeneration;
+  await readAccountBag();
+  const guest = bagState();
+  if (!accountBag || !guest.items.length || generation !== bagGeneration) return getBag();
+  await updateAccountBag((items) => {
+    const combined = new Map(items.map(({ sku, qty }) => [sku, qty]));
+    for (const { sku, qty } of guest.items)
+      combined.set(sku, Math.max(qty, combined.get(sku) || 0));
+    return Array.from(combined, ([sku, qty]) => ({ sku, qty }));
+  }, crypto.randomUUID());
+  if (generation === bagGeneration) save(localStorage, BAG, { ...guest, items: [] });
+  return getBag();
+}
+export function syncBag() {
+  return withBagLock(refreshAccountBag);
+}
+export function changeBag(reduce, orderId = null) {
+  return withBagLock(async () => {
+    if (!bagKnown) await refreshAccountBag();
+    if (accountBag) return updateAccountBag(reduce, orderId || crypto.randomUUID());
+
     const state = bagState();
     if (orderId && state.settled.includes(orderId)) return state.items;
     state.items = reduce(state.items);
@@ -65,10 +140,7 @@ export async function changeBag(reduce, orderId = null) {
     if (!save(localStorage, BAG, state))
       throw Error('Your browser could not save the bag.');
     return state.items;
-  };
-  return globalThis.navigator?.locks
-    ? navigator.locks.request(BAG, change)
-    : change();
+  });
 }
 export function node(tag, cls, text) {
   const el = document.createElement(tag);

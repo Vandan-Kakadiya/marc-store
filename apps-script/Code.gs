@@ -109,6 +109,10 @@ function doPost(event) {
   try {
     if (request.action === 'placeOrder')
       return output_(saveOrder_(props, request.data));
+    if (request.action === 'reserveQueuedOrder')
+      return output_(reserveQueuedOrder_(props, request.data));
+    if (request.action === 'accountState')
+      return output_(accountState_(props, request.data));
     if (request.action === 'listOrders')
       return output_(listOrders_(props, request.data));
     if (request.action === 'catalogue')
@@ -126,6 +130,54 @@ function doPost(event) {
         ').'
     );
     return output_({ ok: false, code: error.marcCode || 'storage' });
+  }
+}
+function activeAccountState_(value, now) {
+  var entry = JSON.parse(value || 'null');
+  return entry && entry.expires > now ? entry : null;
+}
+function pruneAccountState_(store, now) {
+  if (Number(store.getProperty('MARC_ACCOUNT_SWEEP') || 0) > now) return;
+  var properties = store.getProperties();
+  Object.keys(properties).forEach(function (key) {
+    if (/^MARC_ACCOUNT_(session|bag)_[a-f0-9]{64}$/.test(key) &&
+        !activeAccountState_(properties[key], now)) store.deleteProperty(key);
+  });
+  store.setProperty('MARC_ACCOUNT_SWEEP', String(now + 3600000));
+}
+function accountState_(properties, request) {
+  var kind = request.kind, action = request.action;
+  if (!['session', 'bag'].includes(kind) || !/^[a-f0-9]{64}$/.test(request.key || ''))
+    return { ok: false, code: 'invalid' };
+  var key = 'MARC_ACCOUNT_' + kind + '_' + request.key;
+  if (action === 'read') return { ok: true, data: activeAccountState_(properties[key], Date.now()) };
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return { ok: false, code: 'busy' };
+  try {
+    var store = PropertiesService.getScriptProperties(), now = Date.now();
+    var current = activeAccountState_(store.getProperty(key), now);
+    var version = current ? current.version : null;
+    if (request.expected !== undefined && request.expected !== version)
+      return { ok: false, code: 'conflict' };
+    if (action === 'remove' && typeof request.expected === 'string') {
+      store.deleteProperty(key);
+      return { ok: true, data: true };
+    }
+    if (action !== 'write' || !request.value || typeof request.value !== 'object')
+      return { ok: false, code: 'invalid' };
+    var entry = {
+      version: Utilities.getUuid(),
+      expires: now + (kind === 'session' ? 3600000 : 30 * 86400000),
+      value: request.value
+    };
+    var encoded = JSON.stringify(entry);
+    if (encoded.length > 8700) return { ok: false, code: 'invalid' };
+    pruneAccountState_(store, now);
+    store.setProperty(key, encoded);
+    return { ok: true, data: entry };
+  } finally {
+    lock.releaseLock();
   }
 }
 function setupError_(message) {
@@ -331,7 +383,7 @@ function orderRow_(o, fingerprint, date, link) {
     fingerprint
   ];
 }
-function proof_(o, uploadedBytes) {
+function validateOrder_(o) {
   var paidWith = (o && o.paidWith) || '';
   var upiReference = (o && o.upiReference) || '';
   var referencePattern = paidWith === BANK_TRANSFER
@@ -352,15 +404,13 @@ function proof_(o, uploadedBytes) {
     !Number.isSafeInteger(o.total) ||
     o.total <= 0 ||
     !o.proof ||
-    !Object.prototype.hasOwnProperty.call(FORMATS, o.proof.mime) ||
-    (!uploadedBytes && (typeof o.proof.base64 !== 'string' ||
-      o.proof.base64.length > Math.ceil(PROOF_LIMIT / 3) * 4))
+    !Object.prototype.hasOwnProperty.call(FORMATS, o.proof.mime)
   )
     throw Error('Invalid order.');
-  var bytes = uploadedBytes || Utilities.base64Decode(o.proof.base64);
-  if (!bytes.length || bytes.length > PROOF_LIMIT)
-    throw Error('Invalid screenshot.');
-  var hash = digest_(bytes);
+}
+function submissionEvidence_(o, hash) {
+  var paidWith = o.paidWith || '';
+  var upiReference = o.upiReference || '';
   var submission = [
     o.id, o.buyer, o.contact, o.lines, o.total, o.payee, o.utr, o.proof.mime, hash
   ];
@@ -373,12 +423,23 @@ function proof_(o, uploadedBytes) {
   if (upiReference) submission.push(upiReference);
   var fingerprint = digest_(JSON.stringify(submission));
   return {
-    bytes: bytes,
     hash: hash,
     fingerprint: fingerprint,
     earlierSubmission: earlierSubmission,
     mime: o.proof.mime
   };
+}
+function proof_(o, uploadedBytes) {
+  validateOrder_(o);
+  if (!uploadedBytes && (typeof o.proof.base64 !== 'string' ||
+      o.proof.base64.length > Math.ceil(PROOF_LIMIT / 3) * 4))
+    throw Error('Invalid screenshot.');
+  var bytes = uploadedBytes || Utilities.base64Decode(o.proof.base64);
+  if (!bytes.length || bytes.length > PROOF_LIMIT)
+    throw Error('Invalid screenshot.');
+  var evidence = submissionEvidence_(o, digest_(bytes));
+  evidence.bytes = bytes;
+  return evidence;
 }
 function proofFilename_(o, mime) {
   var name = String(o.contact.name || '')
@@ -433,11 +494,12 @@ function nextOrderNumber_(tab, columns, contact) {
   var group = orderGroup_(contact.affiliation, contact.roll);
   var prefix = 'MARC_' + group + '_';
   var count = 0, highest = 0;
-  // The order number is allocated after the new order's provisional row exists.
-  var rows = tab.getRange(2, 1, tab.getLastRow() - 1, columns.number).getValues();
+  var rowCount = tab.getLastRow() - 1;
+  if (!rowCount) return prefix + '1';
+  var rows = tab.getRange(2, 1, rowCount, columns.number).getValues();
   rows.forEach(function (row) {
-    if (!savedOrder_(row)) return;
-    if (orderGroup_(row[6], row[7]) === group) count++;
+    if (!ORDER_ID_PATTERN.test(row[0])) return;
+    if (savedOrder_(row) && orderGroup_(row[6], row[7]) === group) count++;
     var number = row[columns.number - 1];
     if (typeof number === 'string' && number.indexOf(prefix) === 0) {
       var sequence = Number(number.slice(prefix.length));
@@ -575,12 +637,30 @@ function sameSubmission_(previous, evidence) {
     (!!evidence.earlierSubmission && previous[12] === digest_(evidence.earlierSubmission))
   );
 }
+// The website calls this only after the private queue has stored the proof.
+function reserveQueuedOrder_(p, request) {
+  var o = request.order;
+  validateOrder_(o);
+  if (!/^[a-f0-9]{64}$/.test(request.proofHash || '')) throw Error('Invalid screenshot hash.');
+  var evidence = submissionEvidence_(o, request.proofHash);
+  var route = orderProperties_(p, o.collection);
+  var book = orderBook_(route);
+  var legacy = legacy_(book, route);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(12000)) return { ok: false, code: 'busy' };
+  try {
+    var reservation = reserveOrder_(book, legacy, o, evidence, '', true);
+    return reservation.result || { ok: true, data: { number: reservation.number } };
+  } finally {
+    lock.releaseLock();
+  }
+}
 /**
  * Saves an order in three steps so the script lock (which every order shares)
  * is never held during the slow screenshot upload:
- *   1. locked:   check the order ID and UTR, then reserve a provisional row
+ *   1. locked:   check the UTR and reserve the MARC number in a provisional row
  *   2. unlocked: save and verify the screenshot in Drive
- *   3. locked:   allocate the order number and complete the row
+ *   3. locked:   complete the row using the reserved MARC number
  * Retrying with the same details is safe at every step.
  */
 function saveOrder_(p, o, uploadedBytes) {
@@ -620,42 +700,51 @@ function saveOrder_(p, o, uploadedBytes) {
     lock.releaseLock();
   }
 }
-function reserveOrder_(book, legacy, o, evidence, candidate) {
-  var tab = orderTab_(book),
-    columns = orderColumns_(tab),
-    row = locate_(tab, 1, o.id), proofId;
-  if (row) {
-    var previous = tab.getRange(row, 1, 1, HEADINGS.length).getDisplayValues()[0];
+function reserveOrder_(book, legacy, o, evidence, candidate, queueAdmission) {
+  var tab = orderTab_(book), columns = orderColumns_(tab);
+  var previousRow = locate_(tab, 1, o.id), number;
+  var width = Math.max(HEADINGS.length, columns.number, columns.proofId);
+  if (previousRow) {
+    var previous = tab.getRange(previousRow, 1, 1, width).getDisplayValues()[0];
     if (!sameSubmission_(previous, evidence))
       return { result: { ok: false, code: 'retry_different' } };
-    if (previous[1] && previous[11]) {
-      var previousNumber = tab.getRange(row, columns.number).getDisplayValues()[0][0];
-      return { result: savedReceipt_(o.id, previous, previousNumber) };
+    number = previous[columns.number - 1];
+    if (savedOrder_(previous))
+      return { result: savedReceipt_(o.id, previous, number) };
+    var proofId = previous[columns.proofId - 1];
+    if (!proofId && !candidate && !queueAdmission)
+      return { result: { ok: false, code: 'busy' } };
+    var changed = false;
+    if (!number) {
+      number = nextOrderNumber_(tab, columns, o.contact);
+      tab.getRange(previousRow, columns.number).setValues([[number]]);
+      changed = true;
     }
-    proofId = tab.getRange(row, columns.proofId).getDisplayValues()[0][0];
-    if (!proofId) {
-      if (!candidate) return { result: { ok: false, code: 'busy' } };
+    if (!proofId && candidate) {
       proofId = candidate;
-      tab.getRange(row, columns.proofId).setValues([[proofId]]);
-      SpreadsheetApp.flush();
+      tab.getRange(previousRow, columns.proofId).setValues([[proofId]]);
+      changed = true;
     }
-  } else {
-    if (locate_(tab, 11, o.utr) || (legacy && locate_(legacy.sheet, legacy.column, o.utr)))
-      return { result: { ok: false, code: 'reference_in_use' } };
-    if (!candidate) return { result: { ok: false, code: 'busy' } };
-    row = tab.getLastRow() + 1;
-    var maxRows = tab.getMaxRows();
-    if (row > maxRows) tab.insertRowsAfter(maxRows, 100);
-    tab.getRange(row, 2).setNumberFormat('@');
-    tab.getRange(row, 11).setNumberFormat('@');
-    proofId = candidate;
-    var pending = orderRow_(o, evidence.fingerprint, '', '');
-    while (pending.length < columns.proofId) pending.push('');
-    pending[columns.proofId - 1] = proofId;
-    tab.getRange(row, 1, 1, pending.length).setValues([pending]);
-    SpreadsheetApp.flush();
+    if (changed) SpreadsheetApp.flush();
+    return { tab: tab, columns: columns, proofId: proofId, number: number };
   }
-  return { tab: tab, columns: columns, proofId: proofId };
+
+  if (locate_(tab, 11, o.utr) || (legacy && locate_(legacy.sheet, legacy.column, o.utr)))
+    return { result: { ok: false, code: 'reference_in_use' } };
+  if (!candidate && !queueAdmission) return { result: { ok: false, code: 'busy' } };
+  var row = tab.getLastRow() + 1;
+  var maxRows = tab.getMaxRows();
+  if (row > maxRows) tab.insertRowsAfter(maxRows, 100);
+  tab.getRange(row, 2).setNumberFormat('@');
+  tab.getRange(row, 11).setNumberFormat('@');
+  number = nextOrderNumber_(tab, columns, o.contact);
+  var pending = orderRow_(o, evidence.fingerprint, '', '');
+  while (pending.length < width) pending.push('');
+  pending[columns.proofId - 1] = candidate;
+  pending[columns.number - 1] = number;
+  tab.getRange(row, 1, 1, pending.length).setValues([pending]);
+  SpreadsheetApp.flush();
+  return { tab: tab, columns: columns, proofId: candidate, number: number };
 }
 function finishOrder_(tab, columns, o, evidence, link) {
   var row = locate_(tab, 1, o.id);
@@ -666,11 +755,11 @@ function finishOrder_(tab, columns, o, evidence, link) {
     var previousNumber = tab.getRange(row, columns.number).getDisplayValues()[0][0];
     return savedReceipt_(o.id, previous, previousNumber);
   }
+  var number = tab.getRange(row, columns.number).getDisplayValues()[0][0];
+  if (!number) throw Error('Order number is unavailable.');
   var when = new Date().toISOString();
-  var number = nextOrderNumber_(tab, columns, o.contact);
   var snapshot = orderSnapshot_(buyerKey_(o.buyer), o.lines);
   var print = printColumns_(o.lines);
-  tab.getRange(row, columns.number).setValues([[number]]);
   tab.getRange(row, columns.snapshot).setValues([[snapshot]]);
   if (o.paidWith) tab.getRange(row, columns.paidWith).setValues([[textCell_(o.paidWith)]]);
   if (o.upiReference)
