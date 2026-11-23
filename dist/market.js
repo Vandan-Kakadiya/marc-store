@@ -15,7 +15,7 @@ import {
   publishedCatalogue,
   read,
   save
-} from './market-core.js?v=12';
+} from './market-core.js?v=13';
 const published = publishedCatalogue();
 let catalog = published || cachedCatalogue(),
   bag = getBag(),
@@ -43,6 +43,16 @@ const groupKey = (rows) =>
   JSON.stringify([rows[0].name.toLowerCase(), rows[0].colour.toLowerCase()]);
 const count = (items = bag) => items.reduce((n, r) => n + r.qty, 0);
 const allowsOrder = () => configured && catalog.open;
+const setText = (el, text) => {
+  if (el.textContent !== text) el.textContent = text;
+};
+const catalogueKey = (c) =>
+  JSON.stringify([c.skus, c.homepageBanners, c.open, c.version, c.limit, c.terms]);
+let catalogKey = catalogueKey(catalog),
+  cardsFor = null,
+  cards = [],
+  typeNames = '',
+  emptyNote;
 const toast = (message) => {
   clearTimeout(toastTimer);
   $('toast').textContent = message;
@@ -58,38 +68,9 @@ async function updateBag(reduce, reportError = toast) {
     return false;
   }
 }
-function repaint() {
-  renderHomepageBanners();
-  const all = groups(),
-    names = [...new Set(catalog.skus.map((s) => s.name))],
-    old = $('type').value;
-  $('type').replaceChildren(
-    new Option('All products', ''),
-    ...names.map((v) => new Option(v, v))
-  );
-  if (names.includes(old)) $('type').value = old;
-  $('filters').hidden = all.length < 2;
-  $('type').hidden = names.length < 2;
-  const query = $('filters').hidden
-    ? ''
-    : $('search').value.toLowerCase().trim();
-  const filter = $('filters').hidden ? '' : $('type').value;
-  const visible = all.filter(
-    (rows) =>
-      (!filter || rows[0].name === filter) &&
-      (!query ||
-        rows.some((s) =>
-          [s.name, s.colour, s.size, s.sku]
-            .join(' ')
-            .toLowerCase()
-            .includes(query)
-        ))
-  );
-  const out = $('products');
-  out.replaceChildren();
-  $('result-count').textContent =
-    visible.length + ' ' + (visible.length === 1 ? 'style' : 'styles');
-  for (const rows of visible) {
+function buildCards() {
+  cardsFor = catalog;
+  cards = groups().map((rows) => {
     const row = rows[0],
       card = btn('', 'product-card', () => openProduct(rows)),
       prices = rows.map((s) => s.paise);
@@ -108,30 +89,71 @@ function repaint() {
           money(Math.min(...prices))
       )
     );
-    out.append(card);
-  }
-  if (!visible.length)
-    out.append(
-      node(
-        'p',
-        'card-meta',
-        all.length
-          ? 'No matching merchandise.'
-          : configured && !seenLive && !noticed
-            ? 'Loading merchandise…'
-            : 'New merchandise will appear here when MARC publishes it.'
-      )
+    // One line per option, so a search never matches across two options.
+    const text = rows
+      .map((s) => [s.name, s.colour, s.size, s.sku].join(' '))
+      .join('\n')
+      .toLowerCase();
+    return { rows, card, text };
+  });
+  emptyNote = node('p', 'card-meta');
+  $('products').replaceChildren(...cards.map((c) => c.card), emptyNote);
+}
+function repaint(dialogs = false) {
+  renderHomepageBanners();
+  // Cards are rebuilt only when the catalogue changes. Searching, filtering
+  // and the background refresh just show or hide the existing cards.
+  const changed = cardsFor !== catalog;
+  if (changed) buildCards();
+  const names = [...new Set(catalog.skus.map((s) => s.name))],
+    type = $('type'),
+    namesKey = JSON.stringify(names);
+  if (namesKey !== typeNames) {
+    typeNames = namesKey;
+    const old = type.value;
+    type.replaceChildren(
+      new Option('All products', ''),
+      ...names.map((v) => new Option(v, v))
     );
-  $('catalog-status').textContent =
+    if (names.includes(old)) type.value = old;
+  }
+  $('filters').hidden = cards.length < 2;
+  type.hidden = names.length < 2;
+  const query = $('filters').hidden
+    ? ''
+    : $('search').value.toLowerCase().trim();
+  const filter = $('filters').hidden ? '' : type.value;
+  let shown = 0;
+  for (const { rows, card, text } of cards) {
+    const visible =
+      (!filter || rows[0].name === filter) && (!query || text.includes(query));
+    if (card.hidden === visible) card.hidden = !visible;
+    if (visible) shown++;
+  }
+  setText($('result-count'), shown + ' ' + (shown === 1 ? 'style' : 'styles'));
+  emptyNote.hidden = shown > 0;
+  if (!shown)
+    setText(
+      emptyNote,
+      cards.length
+        ? 'No matching merchandise.'
+        : configured && !seenLive && !noticed
+          ? 'Loading merchandise…'
+          : 'New merchandise will appear here when MARC publishes it.'
+    );
+  setText(
+    $('catalog-status'),
     noticed ||
-    (!configured
-      ? 'Catalogue preview. Online ordering opens after store setup.'
-      : seenLive && !catalog.open
-        ? 'Ordering is paused. You can still browse the collection.'
-        : '');
-  $('bag-count').textContent = count();
+      (!configured
+        ? 'Catalogue preview. Online ordering opens after store setup.'
+        : seenLive && !catalog.open
+          ? 'Ordering is paused. You can still browse the collection.'
+          : '')
+  );
+  setText($('bag-count'), String(count()));
+  if (!changed && !dialogs) return;
   if ($('product').open) {
-    const rows = all.find((g) => groupKey(g) === activeGroup);
+    const rows = cards.find((c) => groupKey(c.rows) === activeGroup)?.rows;
     if (rows) renderProduct(rows);
     else {
       $('product').close();
@@ -145,7 +167,13 @@ async function refresh() {
   busy = true;
   refreshTime = Date.now();
   try {
-    catalog = await liveCatalogue();
+    const next = await liveCatalogue();
+    const key = catalogueKey(next);
+    // Keep the same object when nothing changed so repaint() skips the rebuild.
+    if (key !== catalogKey) {
+      catalog = next;
+      catalogKey = key;
+    }
     seenLive = true;
     noticed = '';
     $('retry').hidden = true;
@@ -198,27 +226,32 @@ function renderHomepageBanners() {
   }
 
   const track = node('div', 'gallery-track campaign-track');
+  const later = [];
   banners.forEach((banner, index) => {
     const link = node('a', 'campaign-slide');
     link.href = typeof banner.href === 'string' && banner.href.startsWith('https://')
       ? banner.href
       : '#shop';
-    const frame = picture({ ...banner, name: banner.title }, 'campaign-photo');
+    // Only the first banner downloads with the page. The others wait for the
+    // load event so they don't compete with it on slow connections.
+    const frame = picture({ ...banner, name: banner.title }, 'campaign-photo', index > 0);
     const image = frame.querySelector('img');
     if (image) {
       image.alt = banner.title;
-      if (index === 0) {
-        image.loading = 'eager';
-        image.fetchPriority = 'high';
-      }
+      image.loading = 'eager';
+      image.fetchPriority = index === 0 ? 'high' : 'low';
+      if (frame.loadImage) later.push(frame.loadImage);
     }
     link.append(frame);
     track.append(link);
   });
+  const loadLater = () => later.splice(0).forEach((load) => load());
   carousel.replaceChildren(track);
-  setupCarousel(carousel, track, 'banner');
+  setupCarousel(carousel, track, 'banner', loadLater);
+  if (document.readyState === 'complete') setTimeout(loadLater);
+  else window.addEventListener('load', () => setTimeout(loadLater), { once: true });
 }
-function setupCarousel(carousel, track, slideName) {
+function setupCarousel(carousel, track, slideName, prepare = () => {}) {
   const slideCount = track.children.length;
   if (slideCount < 2) return;
   track.tabIndex = 0;
@@ -234,6 +267,7 @@ function setupCarousel(carousel, track, slideName) {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let pointerDown = false,
     selectedDot = 0,
+    waited = false,
     timer;
 
   const current = () => Math.max(
@@ -256,10 +290,21 @@ function setupCarousel(carousel, track, slideName) {
         return;
       }
       const next = (current() + 1) % slideCount;
+      prepare();
+      // Give a photo that is still downloading one more interval rather than
+      // rotating to an empty frame.
+      const image = track.children[next]?.querySelector('img');
+      if (image && !image.complete && !waited) {
+        waited = true;
+        restartRotation();
+        return;
+      }
+      waited = false;
       showPhoto(next, next === 0);
   }, slideName === 'banner' ? 3000 : 4000);
   }
   function showPhoto(index, wrap = false) {
+    prepare();
     track.scrollTo({
       left: index * track.clientWidth,
       behavior: wrap ? 'instant' : 'auto'
@@ -271,6 +316,7 @@ function setupCarousel(carousel, track, slideName) {
   track.addEventListener(
     'scroll',
     () => {
+      prepare();
       const index = current();
       if (index === selectedDot) return;
       dots[selectedDot].removeAttribute('aria-current');
@@ -281,9 +327,11 @@ function setupCarousel(carousel, track, slideName) {
     { passive: true }
   );
   track.addEventListener('pointerdown', () => {
+    prepare();
     pointerDown = true;
     restartRotation();
   });
+  carousel.addEventListener('focusin', prepare);
   function releasePointer() {
     if (!pointerDown) return;
     pointerDown = false;
@@ -629,12 +677,12 @@ for (const d of document.querySelectorAll('dialog'))
   });
 for (const b of document.querySelectorAll('[data-close]'))
   b.onclick = () => $(b.dataset.close).close();
-$('search').oninput = repaint;
-$('type').onchange = repaint;
+$('search').oninput = () => repaint();
+$('type').onchange = () => repaint();
 window.addEventListener('storage', (e) => {
   if (e.key === BAG) {
     bag = getBag();
-    repaint();
+    repaint(true);
   }
 });
 document.addEventListener('visibilitychange', () => {

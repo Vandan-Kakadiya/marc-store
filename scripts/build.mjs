@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { access, readFile, writeFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { siteURL } from '../server/common.js';
 import { callScript } from '../server/script-client.js';
 import { validateCatalogue } from '../server/catalogue.js';
 import { saveDriveProductPhotos } from './drive-product-photos.mjs';
+import { finishBuild } from './page-build.mjs';
 
 const output = new URL('../dist/', import.meta.url);
 const manifest = JSON.parse(
@@ -47,26 +48,13 @@ await saveDriveProductPhotos(
 snapshot.products = await Promise.all(snapshot.products.map(addImageVariants));
 if (snapshot.homepageBanners)
   snapshot.homepageBanners = await Promise.all(snapshot.homepageBanners.map(addImageVariants));
-const json = JSON.stringify(snapshot);
-const index = new URL('index.html', output);
-const html = await readFile(index, 'utf8');
-// Keep unusually large catalogues on the existing fetch path.
-const inline =
-  Buffer.byteLength(json) <= 64000 ? json.replace(/</g, '\\u003c') : '';
-await Promise.all([
-  writeFile(new URL('catalogue.json', output), json + '\n'),
-  writeFile(
-    index,
-    html.replace(
-      /(<script id="catalogue-snapshot" type="application\/json">)[\s\S]*?(<\/script>)/,
-      (_, start, end) => start + inline + end
-    )
-  )
-]);
+const assets = await finishBuild(output, snapshot);
 console.log(
   'MARC catalogue saved. ' +
     snapshot.products.length +
     ' products, ' +
     (snapshot.ready ? 'ordering open' : 'ordering paused') +
+    '. Versioned ' +
+    Object.values(assets).join(', ') +
     '.'
 );

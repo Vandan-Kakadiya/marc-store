@@ -156,6 +156,8 @@ export function validateCatalogue(obj) {
       : null;
   if (obj.ready && (!products.length || !payment || !obj.version))
     throw Error('Open catalogue is missing details.');
+  if (obj.collection !== undefined && (typeof obj.collection !== 'string' || !sha256Pattern.test(obj.collection)))
+    throw Error('Invalid order collection.');
   return {
     ...emptyCatalogue,
     ready: obj.ready,
@@ -163,6 +165,7 @@ export function validateCatalogue(obj) {
     ...(homepageBanners.length ? { homepageBanners } : {}),
     maxItems: obj.maxItems,
     version: obj.version,
+    ...(obj.collection ? { collection: obj.collection } : {}),
     terms: obj.terms,
     payment
   };

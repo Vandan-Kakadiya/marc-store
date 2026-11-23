@@ -14,7 +14,7 @@ import {
   post,
   read,
   save
-} from './market-core.js?v=10';
+} from './market-core.js?v=13';
 
 const legacyReceiptKey = 'marc-vercel-receipts-v1';
 const path = new URL(location.href);
@@ -28,7 +28,7 @@ const printLabels = {
 const orderProgress = $('order-progress');
 const googleButton = $('google');
 const googleProgress = $('google-progress');
-const zones = ['login', 'contact', 'payment', 'receipt', 'orders'];
+const zones = ['login', 'contact', 'payment', 'pending-order', 'receipt', 'orders'];
 const indiaTime = new Intl.DateTimeFormat('en-IN', {
   dateStyle: 'medium',
   timeStyle: 'short',
@@ -43,6 +43,7 @@ const ordersMode =
 let loadCount = 0;
 let sessionTimer, sessionEndsAt;
 let googleLoaderTimer, googleRetryTimer;
+let statusTimer;
 
 function show(zone) {
   for (const id of zones) $(id).hidden = id !== zone;
@@ -88,6 +89,7 @@ function expireSession(
 ) {
   ++loadCount;
   clearTimeout(sessionTimer);
+  clearTimeout(statusTimer);
   user = null;
   order = null;
   sessionEndsAt = 0;
@@ -282,7 +284,7 @@ function showUpiMethods(payment, amount) {
   }
   const qr = $('qr');
   const qrLink = $('qr-link');
-  const orderQr = payment.orderQr?.startsWith('data:image/gif;base64,') ? payment.orderQr : '';
+  const orderQr = /^data:image\/(png|gif);base64,/.test(payment.orderQr || '') ? payment.orderQr : '';
   function displayQr(generated) {
     const source = generated ? orderQr : payment.qr;
     $('qr-help').textContent = generated
@@ -291,7 +293,7 @@ function showUpiMethods(payment, amount) {
     qrLink.href = source;
     qrLink.textContent = generated ? 'Save QR image' : 'Open QR image ↗';
     if (generated) {
-      qrLink.download = 'marc-payment-qr.gif';
+      qrLink.download = orderQr.startsWith('data:image/png') ? 'marc-payment-qr.png' : 'marc-payment-qr.gif';
       qrLink.removeAttribute('target');
     } else {
       qrLink.removeAttribute('download');
@@ -361,6 +363,72 @@ function openReceipt(entry) {
     indiaTime.format(new Date(entry.submittedAt)) + ' IST';
   $('receipt').querySelector('h2').focus({ preventScroll: true });
 }
+async function finishSubmission(saved, turn) {
+  if (saved.id !== draft?.id || !saved.token) throw Error('The order save could not be confirmed.');
+  const completed = { ...draft, receipt: saved.token };
+  const savedDraft = save(sessionStorage, DRAFT, completed);
+  draft = completed;
+  clearTimeout(statusTimer);
+  proof.proof.value = '';
+  if (turn === loadCount) {
+    orderProgress.close();
+    message();
+    openReceipt(saved);
+  }
+  try {
+    await finishBag(completed);
+  } catch {
+    if (turn === loadCount) message('Your order was saved. Your browser could not update the bag.');
+  }
+  if (turn === loadCount && !savedDraft)
+    message('Your order was saved. Keep a copy of your order reference.');
+}
+function pollOrder(turn) {
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => checkSubmission(turn), 12000 + Math.random() * 6000);
+}
+function showPendingOrder(entry, turn) {
+  if (!draft.queued) {
+    draft = { ...draft, queued: true };
+    save(sessionStorage, DRAFT, draft);
+  }
+  const section = $('pending-order');
+  const focus = section.hidden;
+  const needsAttention = entry.status === 'needs_attention';
+  orderProgress.close();
+  proof.proof.value = '';
+  show('pending-order');
+  summary(entry.lines, true);
+  $('pending-title').textContent = needsAttention ? 'Order needs attention' : 'Saving your order';
+  $('pending-message').textContent = needsAttention ? entry.message :
+    'We have your payment screenshot. This page will update when your order is saved. Pay only once.';
+  $('pending-reference').textContent = entry.id;
+  if (focus) $('pending-title').focus({ preventScroll: true });
+  message('', !needsAttention);
+  if (!needsAttention) pollOrder(turn);
+}
+async function checkSubmission(turn) {
+  if (turn !== loadCount || !draft?.quote) return true;
+  try {
+    const entry = await post('status', { quote: draft.quote });
+    if (turn !== loadCount) return true;
+    if (entry.id !== draft.id) throw Error('The order status could not be confirmed.');
+    if (entry.token) await finishSubmission(entry, turn);
+    else if (entry.status === 'processing' || entry.status === 'needs_attention') showPendingOrder(entry, turn);
+    else if (entry.status === 'not_submitted' && !draft.queued) return false;
+    else throw Error('The order status could not be confirmed.');
+  } catch (e) {
+    if (turn !== loadCount) return true;
+    if (e.status === 401) {
+      expireSession('Sign in with the same Google account to check your order.');
+      return true;
+    }
+    if (!draft.queued && e.status !== 403 && e.status !== 409) return false;
+    message(e.message + ' Order reference ' + draft.id, true);
+    if (draft.queued && e.status !== 403 && e.status !== 409) pollOrder(turn);
+  }
+  return true;
+}
 async function myOrders(turn) {
   show('orders');
   summary([]);
@@ -407,6 +475,7 @@ async function myOrders(turn) {
 }
 async function boot() {
   const turn = ++loadCount;
+  clearTimeout(statusTimer);
   const requestedAt = Date.now();
   $('google').disabled = true;
   $('continue-payment').disabled = true;
@@ -459,6 +528,8 @@ async function boot() {
       return;
     }
     if (draft.quote) {
+      if (draft.sent && await checkSubmission(turn)) return;
+      if (turn !== loadCount) return;
       const record = await post('resume', { quote: draft.quote });
       if (turn === loadCount) openPayment(record);
       return;
@@ -624,35 +695,24 @@ $('proof-form').onsubmit = async (e) => {
       body: payload,
       signal: AbortSignal.timeout(65000)
     });
-    if (saved.id !== pending.id || !saved.token)
+    if (saved.id !== pending.id)
       throw Error('The order save could not be confirmed.');
-    const completed = { ...pending, receipt: saved.token };
-    const savedDraft = save(sessionStorage, DRAFT, completed);
-    draft = completed;
     clearInterval(progressTimer);
-    if (turn === loadCount) {
-      setOrderProgress(100);
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      if (turn === loadCount) {
-        orderProgress.close();
-        openReceipt(saved);
-      }
+    if (saved.status === 'processing') {
+      if (turn === loadCount) showPendingOrder(saved, turn);
+      return;
     }
-    proof.proof.value = '';
-    try {
-      await finishBag(completed);
-    } catch {
-      if (turn === loadCount)
-        message('Your order was saved. Your browser could not update the bag.');
-    }
-    if (turn === loadCount && !savedDraft)
-      message('Your order was saved. Keep a copy of your order reference.');
+    await finishSubmission(saved, turn);
   } catch (e) {
     if (turn !== loadCount) return;
     if (e.status === 401) {
       expireSession(
         'Sign in with the same Google account, then retry using the same UTR and screenshot.'
       );
+    } else if (e.status === 503 || !e.status) {
+      orderProgress.close();
+      if (!await checkSubmission(turn) && turn === loadCount)
+        message(e.message + ' Order reference ' + pending.id, true);
     } else {
       message(e.message + ' Order reference ' + pending.id);
     }

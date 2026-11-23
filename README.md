@@ -2,17 +2,32 @@
 
 This update uses the latest navy-and-orange MARC design. Use your existing project and address, **marc-store-iimt.vercel.app**. Customers shop, provide their details, enter the UPI reference and attach their screenshot on the MARC website. Google sign-in returns them to checkout.
 
-When the customer clicks **Place order**, a Vercel function sends the order to Apps Script. Apps Script saves the screenshot in your restricted Google Drive folder, records the order in **MARC Website Orders** inside the Form’s linked spreadsheet, and returns the order reference and submission timestamp. The customer sees **Order received** after both saves are confirmed. A separate background catalogue check picks up your edits to the existing Form.
+With the launch queue enabled, **Place order** saves the submission to private Vercel storage and shows **Saving your order**. One Apps Script worker saves each screenshot to the restricted Drive folder and writes the order to **MARC Website Orders**. The page shows **Order received** after both saves succeed. A separate background check picks up catalogue edits to the existing Form.
 
 ## Update a live MARC store
 
-1. From **MARC-Checkout-Update.zip**, copy `apps-script/Code.gs` into your existing **MARC Vercel Checkout** Apps Script project and save. Select **Deploy → Manage deployments → Edit → New version → Deploy** on the current web app.
-2. At the top level of **marc-store** on GitHub, upload the contents of the extracted ZIP with their folders. Commit to `main` and wait for **Ready** in Vercel.
-3. Check **My orders** on two devices using the same Google account. The update requires a fresh sign-in and signs customers out 20 minutes after sign-in.
+1. Start with the existing Form, Sheet and screenshot folder configured in Apps Script. In the existing project, replace `Code.gs` and `appsscript.json` with the two files from `apps-script/`. To show the manifest, open **Project Settings → Show appsscript.json manifest file in editor**. If you use a standard Google Cloud project, enable **Google Drive API** in that Cloud project. [Drive API setup](https://developers.google.com/apps-script/guides/services/advanced)
+2. Run **checkOrderStorage**. The log should show **Order storage is ready**. Select **Deploy → Manage deployments → Edit → New version → Deploy** on the existing web app. Keep the same `/exec` URL and the same secrets.
+3. In Vercel, open **Storage → Create Database → Blob**. Choose **Private** and connect it to your existing MARC project for **Production**. Confirm that `BLOB_READ_WRITE_TOKEN` appears in the project's environment variables. [Vercel Blob setup](https://vercel.com/docs/vercel-blob/private-storage)
+4. Upload the files inside `1-upload-to-github/` to the matching paths in the existing repository. Wait for the new Production deployment in Vercel. `MARC_ORDER_QUEUE_ENABLED` stays off during this deployment.
+5. In the Apps Script editor, run **installOrderQueue** and approve permissions. Confirm **Order queue worker is installed** in the execution log and **processOrderQueue** in **Triggers**. This checks that the script owner can reach the private storage from Apps Script.
+6. In **Vercel → Settings → Environment Variables**, set `MARC_ORDER_QUEUE_ENABLED` to `1` for **Production**, then redeploy that release. Place one authorised test order before sharing the launch link. Look for **Saving your order**, then **Order received**, one Sheet row and one private Drive screenshot. The **Paid with** and **Payment screenshot** columns should be present.
+
+Keep **Accepting responses** off while preparing a new collection. Activate it for the test order and publish the catalogue. The build log shows how many products are available.
+
+## During and after a launch
+
+- Buyers can refresh checkout or sign in again in the same tab to see their submitted order. **My orders** shows it once Google has saved it. A screenshot or a status of **Under review** still needs payment reconciliation.
+- The Apps Script trigger checks the queue every minute and continues from the next batch if needed. In **Apps Script → Executions**, open `processOrderQueue` to see how many jobs were saved or will retry. You can run that function manually to check immediately. In Vercel's private Blob store, check `marc/orders/v1/pending/` for waiting jobs. For payment conflicts, look up the buyer's order reference under `marc/orders/v1/review/` to find the order details and screenshot. Pending jobs are removed after a result is saved. The small saved status records expire after 30 days. Clear reconciled review files once MARC no longer needs them.
+- For the next collection, close the previous Form, update `FORM_ID` and `RESPONSE_SHEET_ID` to the new Form and its restricted order spreadsheet, run **checkOrderStorage**, and publish the catalogue. Each new checkout is tied to its own Sheet. A buyer already at payment can finish in the original Sheet until their quote expires, up to seven days from when it was issued. Let those quotes expire and the queue finish before treating the old Sheet as final for the SA office.
+
+## Test the launch burst locally
+
+Run `npm ci` and `npm run test:launch` with Node.js 24. The test sends 75 simultaneous **Place order** submissions, including screenshots of 1.5 MB and 4 MB, through the queue with simulated Vercel Blob and Google services. It verifies one order and one screenshot per submission, retries after a lost reply, and correct Sheet routing. `npm test` also runs the catalogue and checkout tests. Real processing time depends on the connected services.
 
 New student order numbers use the roll number and sequence, such as `MARC_260431_1`. Staff and Other orders use their group in place of the roll number. The sequence includes completed earlier orders with the same roll number. Earlier orders display their original reference. New screenshot filenames start with the roll number and customer name, followed by a unique order ID.
 
-Earlier orders saved with a Gmail or Google Workspace email can be linked through that email. For an older order placed with another email provider, open **My orders** while signed in on the original browser to link its saved receipt.
+Earlier orders saved with the user's IIM Trichy email can be linked through that address. For an older order placed with another email provider, open **My orders** while signed in on the original browser to link its saved receipt.
 
 ## 1. Extract the repository and generate the keys
 
@@ -39,7 +54,7 @@ The script secret goes in both Apps Script and Vercel. The session key goes only
 | Property | Value |
 | --- | --- |
 | `FORM_ID` | The existing Google Form ID you copied |
-| `RESPONSE_SHEET_ID` | The existing Form-linked spreadsheet ID you copied |
+| `RESPONSE_SHEET_ID` | The ID of the restricted spreadsheet that stores **MARC Website Orders** |
 | `SCREENSHOT_FOLDER_ID` | The existing restricted Drive folder ID you copied |
 | `STOREFRONT_URL` | `https://marc-store-iimt.vercel.app` |
 | `PAYMENT_QR_URL` | `https://marc-store-iimt.vercel.app/assets/payment-qr.jpeg` |
@@ -47,9 +62,10 @@ The script secret goes in both Apps Script and Vercel. The session key goes only
 | `MARC_SCRIPT_SECRET` | The first 64-character value from Step 1 |
 | `UPI_ID` | Optional. The exact UPI ID for the QR, if you have it |
 | `LEGACY_TAB` | Optional. If you previously received payments, enter the exact tab name containing those orders, such as `Form Responses 1` |
+| `LEGACY_SHEET_ID` | Optional with `LEGACY_TAB`. Use the ID of a separate restricted archive spreadsheet when it holds those older orders |
 | `LEGACY_UTR_HEADER` | Optional with `LEGACY_TAB`. Enter the exact transaction column heading if it differs from `UPI transaction ID (UTR)` |
 
-7. Beside **Run**, select **checkOrderStorage** and click **Run**. Review and approve the script’s access for the owner account when prompted. Open **Execution log**. It should show **Order storage is ready**. This checks the Form’s linked spreadsheet and creates the order tab with its headers. If it logs **Catalogue paused**, correct the reported Form or QR setting using Step 6.
+7. Beside **Run**, select **checkOrderStorage** and click **Run**. Review and approve the script’s access for the owner account when prompted. Open **Execution log**. It should show **Order storage is ready**. This checks the configured spreadsheet and creates the order tab with its headers. If it logs **Catalogue paused**, correct the reported Form or QR setting using Step 6.
 8. Select **Deploy → New deployment → Web app**. Enter **MARC Vercel checkout receiver** in the description.
 
 | Web app setting | Select |
@@ -64,7 +80,7 @@ When you edit **Code.gs** later, save it and select **Deploy → Manage deployme
 ## 3. Enable Google sign-in
 
 1. Open **Google Cloud Console → Google Auth Platform** in the project you manage. If it asks you to configure the app, enter **MARC Store** and the committee’s support and developer contact email addresses. [Google Auth Platform](https://console.cloud.google.com/auth/overview)
-2. In **Audience**, choose **External** if you want personal Google accounts as well as institute accounts. Use **Test users** if Google asks while testing. Complete any publication or branding requirements shown by Google before opening access to customers. The website requests `openid`, `email` and `profile`.
+2. In **Audience**, choose **Internal** when available to your IIM Trichy Workspace project. Use **Test users** if Google asks while testing. Checkout requires a verified IIM Trichy Google account. The website requests `openid`, `email` and `profile`.
 3. Under **Clients**, create or select a **Web application** OAuth client. Under **Authorized redirect URIs**, add this exact line.
 
 ```text
@@ -100,7 +116,7 @@ Keep the keys in the private settings above. The `.env.example` file in the ZIP 
 | `dist/` | `dist/` for the latest store design and checkout pages |
 | `api/` | `api/` for Google sign-in and the checkout endpoint |
 | `server/` | `server/` for quote validation, auth and the Google connection |
-| `scripts/build.mjs` | `scripts/build.mjs` for the build-time catalogue |
+| `scripts/` | `scripts/` for the build-time catalogue and assets |
 | `apps-script/`, `test/` | Same paths for your setup files and automated checks |
 | `vercel.json`, `package.json`, `package-lock.json` | Repository root |
 | `README.md`, `.env.example`, `.gitignore` | Repository root. Merge any existing ignore rules you still use |
@@ -133,11 +149,18 @@ The storefront loads the latest published catalogue from Vercel. The customer ca
 1. Open your store in a private browser tab. Choose a size and **Add to bag**. Open the same product and click **Buy now**. The summary should show one selected item and keep the item in the earlier bag.
 2. Click **Continue with Google**. After the Google account step, confirm the browser returns to the MARC address. Check the customer’s verified email, phone and affiliation. Each PGPM cohort requires a roll number. **Staff** and **Other** hide it.
 3. Click **Continue to payment**. Confirm the amount and scan the QR to check the recipient reads **IIMT MART**. To test the screen without a payment, stop here or cancel the unpaid checkout.
-4. For the first authorized order, enter the real **12-digit UPI transaction ID**, attach a PNG, JPG or WebP screenshot up to **4 MB**, and click **Place order**. The MARC progress screen reaches 100% once the save is confirmed. The same page then shows **Order received**, the order number and the submission time in IST.
-5. In the existing linked spreadsheet, open **MARC Website Orders**. Find the same reference. Check the timestamp (stored in UTC), contact and item details, UTR, **Under review** status and the **Private screenshot** link. Open the link using a MARC account with access to the folder. Compare the actual UPI credit to the amount and reference, then record the verified status in the Sheet.
-6. Once previous checkouts are reconciled, switch the MARC buying links to the updated checkout on Vercel. Preserve the old spreadsheet tab for historical orders. The Form’s own Responses tab counts direct Google Form submissions. The website writes its orders to **MARC Website Orders** in that same spreadsheet.
+4. For the first authorized order, enter the real **12-digit UPI transaction ID**, attach a PNG, JPG or WebP screenshot up to **4 MB**, and click **Place order**. When the queue is enabled, **Saving your order** appears while the submission is in the queue. The page shows **Order received**, the order number and the submission time in IST after Google confirms the save.
+5. In the configured order spreadsheet, open **MARC Website Orders**. Find the same reference. Check the timestamp (stored in UTC), contact and item details, UTR, **Under review** status and the **Payment screenshot** link. Open the link using a MARC account with access to the folder. Compare the actual UPI credit to the amount and reference, then record the verified status in the Sheet.
+6. Once previous checkouts are reconciled, switch the MARC buying links to the updated checkout on Vercel. The Form’s own Responses tab counts direct Google Form submissions. Website orders go to **MARC Website Orders**.
 
-If the upload is interrupted, stay in the same checkout tab and retry **Place order** with the same UTR and screenshot. The same order can recover a completed save. **My orders** reads the saved orders for the Google account from the linked spreadsheet on any device. Sign in again when the 20-minute MARC session expires.
+If the upload is interrupted, stay in the same checkout tab and retry **Place order** with the same UTR and screenshot. The same order can recover a completed save. **My orders** reads the saved orders for the Google account from the configured spreadsheet on any device. Sign in again when the 20-minute MARC session expires.
+
+## Remove the Google Forms response tab
+
+1. Deploy the current `apps-script/Code.gs` as a new version of the existing checkout web app. Keep `RESPONSE_SHEET_ID` set to the spreadsheet containing **MARC Website Orders**.
+2. In Google Forms, open **Responses → More → Unlink form**. The store still reads the catalogue and **Accepting responses** setting from that Form. [Google Forms response destinations](https://support.google.com/docs/answer/2917686)
+3. If **Form Responses 1** contains old paid orders, copy the tab to a separate restricted spreadsheet. Set `LEGACY_SHEET_ID` to that spreadsheet ID and `LEGACY_TAB` to the exact copied tab name to keep checking old UTRs. If the tab is unused and `LEGACY_TAB` points to it, clear that property.
+4. Run **checkOrderStorage** and confirm the order storage is ready before removing the original **Form Responses 1** tab.
 
 ## Troubleshooting
 

@@ -3,8 +3,12 @@
   "framework": null,
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "regions": ["bom1"],
   "functions": {
     "api/checkout.js": {
+      "maxDuration": 60
+    },
+    "api/order-queue.js": {
       "maxDuration": 60
     }
   },
@@ -41,6 +45,33 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/(market|market-core|checkout|order-progress)\\.([a-f0-9]+)\\.(js|css)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/assets/barlow-condensed-700.woff2",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(marc-mark-small\\.png|iim-mark-small\\.png|marc-favicon-64\\.png|marc-logo-168\\.webp|instagram-glyph\\.svg)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
         }
       ]
     },

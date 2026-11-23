@@ -22,6 +22,15 @@ var PAID_WITH_HEADER = 'Paid with';
 var UPI_REFERENCE_HEADER = 'UPI order reference';
 var PRINT_NAME_HEADER = 'Name to print (optional)';
 var PRINT_NUMBER_HEADER = 'Number to print (optional)';
+var EXTRA_HEADERS = {
+  number: ORDER_NUMBER_HEADER,
+  snapshot: SNAPSHOT_HEADER,
+  paidWith: PAID_WITH_HEADER,
+  upiReference: UPI_REFERENCE_HEADER,
+  printName: PRINT_NAME_HEADER,
+  printNumber: PRINT_NUMBER_HEADER,
+  proofId: 'MARC Proof File ID'
+};
 var BANK_TRANSFER = 'Bank transfer (NEFT / IMPS / RTGS)';
 var PAYMENT_METHODS = ['GPay', 'PhonePe', 'Paytm', 'CRED', BANK_TRANSFER, 'Others'];
 var ORDER_ID_PATTERN =
@@ -29,6 +38,9 @@ var ORDER_ID_PATTERN =
 var FORMATS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 var PROOF_LIMIT = 4 * 1024 * 1024;
 var PRODUCT_PHOTO_LIMIT = 4 * 1024 * 1024;
+var ORDER_ROUTE_FIELDS = [
+  'RESPONSE_SHEET_ID', 'SCREENSHOT_FOLDER_ID', 'LEGACY_SHEET_ID', 'LEGACY_TAB', 'LEGACY_UTR_HEADER'
+];
 
 function properties_() {
   return PropertiesService.getScriptProperties().getProperties();
@@ -127,10 +139,28 @@ function private_(driveItem) {
       'Set General access to Restricted on the Sheet and the screenshot folder.'
     );
 }
+function privateBook_(id) {
+  private_(DriveApp.getFileById(id));
+  return SpreadsheetApp.openById(id);
+}
 function orderBook_(p) {
-  if (!p.RESPONSE_SHEET_ID) setupError_('Set RESPONSE_SHEET_ID.');
-  private_(DriveApp.getFileById(p.RESPONSE_SHEET_ID));
-  return SpreadsheetApp.openById(p.RESPONSE_SHEET_ID);
+  if (!p.RESPONSE_SHEET_ID) setupError_('Set RESPONSE_SHEET_ID to the order spreadsheet ID.');
+  return privateBook_(p.RESPONSE_SHEET_ID);
+}
+function orderRoute_(p) {
+  var route = {};
+  ORDER_ROUTE_FIELDS.forEach(function (field) { route[field] = p[field] || ''; });
+  return route;
+}
+function collectionKey_(p, route) {
+  return digest_(JSON.stringify(['MARC collection', p.FORM_ID, route]));
+}
+function orderProperties_(p, collection) {
+  var key = collection || p.ORDER_LEGACY_COLLECTION;
+  if (!key) return p;
+  if (!/^[a-f0-9]{64}$/.test(key) || !p['ORDER_COLLECTION_' + key])
+    setupError_('Register the order spreadsheet for this collection.');
+  return JSON.parse(p['ORDER_COLLECTION_' + key]);
 }
 function orderColumns_(tab) {
   var lastColumn = Math.max(HEADINGS.length, tab.getLastColumn());
@@ -144,15 +174,7 @@ function orderColumns_(tab) {
     tab.getRange(1, screenshotIndex + 1).setValues([[PAYMENT_SCREENSHOT_HEADER]]);
   var changed = renameScreenshot;
   var columns = {};
-  var extraHeaders = {
-    number: ORDER_NUMBER_HEADER,
-    snapshot: SNAPSHOT_HEADER,
-    paidWith: PAID_WITH_HEADER,
-    upiReference: UPI_REFERENCE_HEADER,
-    printName: PRINT_NAME_HEADER,
-    printNumber: PRINT_NUMBER_HEADER
-  };
-  Object.entries(extraHeaders).forEach(function (entry) {
+  Object.entries(EXTRA_HEADERS).forEach(function (entry) {
     var key = entry[0], heading = entry[1];
     var existing = headers.indexOf(heading, HEADINGS.length) + 1;
     if (existing) {
@@ -169,11 +191,27 @@ function orderColumns_(tab) {
   if (changed) SpreadsheetApp.flush();
   return columns;
 }
-function openStorage_(p) {
+function existingOrderColumns_(tab) {
+  var headers = tab
+    .getRange(1, 1, 1, Math.max(HEADINGS.length, tab.getLastColumn()))
+    .getDisplayValues()[0];
+  if (headers.slice(0, HEADINGS.length).join('|') !== HEADINGS.join('|')) return null;
+  var columns = {};
+  var missing = Object.keys(EXTRA_HEADERS).some(function (key) {
+    columns[key] = headers.indexOf(EXTRA_HEADERS[key], HEADINGS.length) + 1;
+    return !columns[key];
+  });
+  return missing ? null : columns;
+}
+/** Drive checks and opening the spreadsheet change nothing, so they run without the lock. */
+function storageHandles_(p) {
   if (!p.SCREENSHOT_FOLDER_ID) setupError_('Set SCREENSHOT_FOLDER_ID.');
   var folder = DriveApp.getFolderById(p.SCREENSHOT_FOLDER_ID);
   private_(folder);
-  var book = orderBook_(p);
+  return { folder: folder, book: orderBook_(p) };
+}
+/** Returns the order tab, creating it on first use. Call with the script lock held. */
+function orderTab_(book) {
   var tab = book.getSheetByName(ORDER_TAB) || book.insertSheet(ORDER_TAB);
   if (!tab.getLastRow()) {
     tab
@@ -183,15 +221,25 @@ function openStorage_(p) {
     tab.setFrozenRows(1);
     SpreadsheetApp.flush();
   }
+  return tab;
+}
+function openStorage_(p) {
+  var handles = storageHandles_(p);
+  var tab = orderTab_(handles.book);
   return {
     tab: tab,
-    folder: folder,
-    legacy: legacy_(book, p),
+    folder: handles.folder,
+    legacy: legacy_(handles.book, p),
     columns: orderColumns_(tab)
   };
 }
 function legacy_(book, p) {
-  if (!p.LEGACY_TAB) return null;
+  if (!p.LEGACY_TAB) {
+    if (p.LEGACY_SHEET_ID) setupError_('Set LEGACY_TAB to the archived orders tab name.');
+    return null;
+  }
+  if (p.LEGACY_SHEET_ID && p.LEGACY_SHEET_ID !== p.RESPONSE_SHEET_ID)
+    book = privateBook_(p.LEGACY_SHEET_ID);
   var sheet = book.getSheetByName(p.LEGACY_TAB);
   if (!sheet || sheet.getName() === ORDER_TAB || !sheet.getLastColumn())
     setupError_('Check LEGACY_TAB.');
@@ -206,7 +254,7 @@ function legacy_(book, p) {
 }
 function locate_(tab, col, value) {
   var n = tab.getLastRow() - 1;
-  if (!n) return 0;
+  if (n <= 0) return 0;
   var cell = tab
     .getRange(2, col, n, 1)
     .createTextFinder(value)
@@ -283,7 +331,7 @@ function orderRow_(o, fingerprint, date, link) {
     fingerprint
   ];
 }
-function proof_(o) {
+function proof_(o, uploadedBytes) {
   var paidWith = (o && o.paidWith) || '';
   var upiReference = (o && o.upiReference) || '';
   var referencePattern = paidWith === BANK_TRANSFER
@@ -305,11 +353,11 @@ function proof_(o) {
     o.total <= 0 ||
     !o.proof ||
     !Object.prototype.hasOwnProperty.call(FORMATS, o.proof.mime) ||
-    typeof o.proof.base64 !== 'string' ||
-    o.proof.base64.length > Math.ceil(PROOF_LIMIT / 3) * 4
+    (!uploadedBytes && (typeof o.proof.base64 !== 'string' ||
+      o.proof.base64.length > Math.ceil(PROOF_LIMIT / 3) * 4))
   )
     throw Error('Invalid order.');
-  var bytes = Utilities.base64Decode(o.proof.base64);
+  var bytes = uploadedBytes || Utilities.base64Decode(o.proof.base64);
   if (!bytes.length || bytes.length > PROOF_LIMIT)
     throw Error('Invalid screenshot.');
   var hash = digest_(bytes);
@@ -332,24 +380,31 @@ function proof_(o) {
     mime: o.proof.mime
   };
 }
-function driveCopy_(folder, o, evidence) {
-  var extension = '.' + FORMATS[evidence.mime];
+function proofFilename_(o, mime) {
   var name = String(o.contact.name || '')
     .replace(/[^\p{L}\p{M}\p{N}]+/gu, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 80);
-  var filename =
-    [orderGroup_(o.contact.affiliation, o.contact.roll), name || 'Buyer', o.id]
-      .join('_') + extension;
-  var existing = folder.getFilesByName(filename);
+  return [orderGroup_(o.contact.affiliation, o.contact.roll), name || 'Buyer', o.id]
+    .join('_') + '.' + FORMATS[mime];
+}
+function existingProof_(folder, o, evidence) {
+  var existing = folder.getFilesByName(proofFilename_(o, evidence.mime));
   if (!existing.hasNext())
-    existing = folder.getFilesByName('MARC-' + o.id + '-' + evidence.hash + extension);
-  var alreadySaved = existing.hasNext();
-  var file = alreadySaved
-    ? existing.next()
-    : folder.createFile(
-        Utilities.newBlob(evidence.bytes, evidence.mime, filename)
-      );
+    existing = folder.getFilesByName('MARC-' + o.id + '-' + evidence.hash + '.' + FORMATS[evidence.mime]);
+  return existing.hasNext() ? existing.next() : null;
+}
+function driveCopy_(folder, o, evidence, id) {
+  var filename = proofFilename_(o, evidence.mime);
+  var alreadySaved = false;
+  try {
+    Drive.Files.create({ id: id, name: filename, parents: [folder.getId()] },
+      Utilities.newBlob(evidence.bytes, evidence.mime, filename), { fields: 'id', supportsAllDrives: true });
+  } catch (error) {
+    // The upload may already have committed. Reuse the exact reserved file ID.
+    alreadySaved = true;
+  }
+  var file = DriveApp.getFileById(id);
   private_(file);
   if (
     file.getSize() !== evidence.bytes.length ||
@@ -428,16 +483,22 @@ function receiptRows_(tab, columns, key, email, proven) {
 function listOrders_(p, identity) {
   if (!identity || typeof identity.buyer !== 'string' || !identity.buyer)
     return { ok: false, code: 'invalid_buyer' };
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(4000)) return { ok: false, code: 'busy' };
+  // Reading needs no lock, so My orders never waits for (or delays) an order
+  // being saved. Rows still being saved are skipped by savedOrder_.
+  var tab = orderBook_(p).getSheetByName(ORDER_TAB);
+  if (!tab || tab.getLastRow() < 2) return { ok: true, data: [] };
+  var columns = existingOrderColumns_(tab), lock = null;
+  if (!columns) {
+    // Adding the newer columns changes the sheet, so that one-off case locks.
+    lock = LockService.getScriptLock();
+    if (!lock.tryLock(4000)) return { ok: false, code: 'busy' };
+  }
   try {
-    var tab = orderBook_(p).getSheetByName(ORDER_TAB);
-    if (!tab || tab.getLastRow() < 2) return { ok: true, data: [] };
-    var columns = orderColumns_(tab);
+    if (!columns) columns = orderColumns_(tab);
     var key = buyerKey_(identity.buyer);
     var email = String(identity.email || '').trim().toLowerCase();
     var proven = new Set(Array.isArray(identity.orderIds) ? identity.orderIds : []);
-    var orders = [], migrated = false;
+    var orders = [], unclaimed = [];
     receiptRows_(tab, columns, key, email, proven).forEach(function (entry) {
       var row = entry.values;
       if (!savedOrder_(row)) return;
@@ -460,8 +521,7 @@ function listOrders_(p, identity) {
         var matchingEmail = email && String(row[4]).trim().toLowerCase() === email;
         if (!proven.has(row[0]) && !matchingEmail)
           return;
-        tab.getRange(entry.row, columns.snapshot).setValues([[orderSnapshot_(key, [])]]);
-        migrated = true;
+        unclaimed.push(entry);
       }
       orders.push({
         id: row[0],
@@ -473,13 +533,34 @@ function listOrders_(p, identity) {
         items: lines.length ? '' : String(row[8] || '')
       });
     });
-    if (migrated) SpreadsheetApp.flush();
+    if (unclaimed.length) claimOrders_(tab, columns, key, unclaimed, lock);
     orders.sort(function (a, b) {
       return b.submittedAt.localeCompare(a.submittedAt) || a.id.localeCompare(b.id);
     });
     return { ok: true, data: orders };
   } finally {
-    lock.releaseLock();
+    if (lock) lock.releaseLock();
+  }
+}
+/**
+ * Links older orders (saved before receipt snapshots existed) to the Google
+ * account that proved them, so later visits find them quickly. Best effort: if
+ * the lock is busy the orders are still listed and get linked on a later visit.
+ */
+function claimOrders_(tab, columns, key, entries, heldLock) {
+  var lock = heldLock || LockService.getScriptLock();
+  if (!heldLock && !lock.tryLock(4000)) return;
+  try {
+    var snapshot = orderSnapshot_(key, []);
+    entries.forEach(function (entry) {
+      var current = tab.getRange(entry.row, 1, 1, columns.snapshot).getValues()[0];
+      // Skip a row that moved or was linked by another visit in the meantime.
+      if (current[0] !== entry.values[0] || current[columns.snapshot - 1]) return;
+      tab.getRange(entry.row, columns.snapshot).setValues([[snapshot]]);
+    });
+    SpreadsheetApp.flush();
+  } finally {
+    if (!heldLock) lock.releaseLock();
   }
 }
 function savedReceipt_(id, row, number) {
@@ -488,82 +569,133 @@ function savedReceipt_(id, row, number) {
     data: { id: id, number: number || id, submittedAt: row[1], status: 'under_review' }
   };
 }
-function saveOrder_(p, o) {
-  var evidence = proof_(o);
+function sameSubmission_(previous, evidence) {
+  return (
+    previous[12] === evidence.fingerprint ||
+    (!!evidence.earlierSubmission && previous[12] === digest_(evidence.earlierSubmission))
+  );
+}
+/**
+ * Saves an order in three steps so the script lock (which every order shares)
+ * is never held during the slow screenshot upload:
+ *   1. locked:   check the order ID and UTR, then reserve a provisional row
+ *   2. unlocked: save and verify the screenshot in Drive
+ *   3. locked:   allocate the order number and complete the row
+ * Retrying with the same details is safe at every step.
+ */
+function saveOrder_(p, o, uploadedBytes) {
+  var evidence = proof_(o, uploadedBytes);
+  var route = orderProperties_(p, o.collection);
+  var handles = storageHandles_(route);
+  var legacy = legacy_(handles.book, route);
+  var priorTab = handles.book.getSheetByName(ORDER_TAB);
+  var priorRow = priorTab ? locate_(priorTab, 1, o.id) : 0;
+  var candidate = '';
+  if (priorRow) {
+    var prior = priorTab.getRange(priorRow, 1, 1, priorTab.getLastColumn()).getDisplayValues()[0];
+    if (!sameSubmission_(prior, evidence)) return { ok: false, code: 'retry_different' };
+    var priorColumns = existingOrderColumns_(priorTab);
+    if (!savedOrder_(prior) && (!priorColumns || !prior[priorColumns.proofId - 1])) {
+      var olderFile = existingProof_(handles.folder, o, evidence);
+      if (olderFile) candidate = olderFile.getId();
+      else candidate = Drive.Files.generateIds({ count: 1, space: 'drive' }).ids[0];
+    }
+  } else {
+    candidate = Drive.Files.generateIds({ count: 1, space: 'drive' }).ids[0];
+  }
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(12000)) return { ok: false, code: 'busy' };
+  var reserved;
   try {
-    var storage = openStorage_(p),
-      tab = storage.tab,
-      columns = storage.columns,
-      row = locate_(tab, 1, o.id);
-    if (row) {
-      var previous = tab
-        .getRange(row, 1, 1, HEADINGS.length)
-        .getDisplayValues()[0];
-      if (
-        previous[12] !== evidence.fingerprint &&
-        (!evidence.earlierSubmission || previous[12] !== digest_(evidence.earlierSubmission))
-      )
-        return { ok: false, code: 'retry_different' };
-      if (previous[1] && previous[11]) {
-        var previousNumber = tab.getRange(row, columns.number).getDisplayValues()[0][0];
-        return savedReceipt_(o.id, previous, previousNumber);
-      }
-    } else {
-      if (
-        locate_(tab, 11, o.utr) ||
-        (storage.legacy &&
-          locate_(storage.legacy.sheet, storage.legacy.column, o.utr))
-      )
-        return { ok: false, code: 'reference_in_use' };
-      row = tab.getLastRow() + 1;
-      var maxRows = tab.getMaxRows();
-      if (row > maxRows) tab.insertRowsAfter(maxRows, 100);
-      tab.getRange(row, 2).setNumberFormat('@');
-      tab.getRange(row, 11).setNumberFormat('@');
-      tab
-        .getRange(row, 1, 1, HEADINGS.length)
-        .setValues([orderRow_(o, evidence.fingerprint, '', '')]);
-      SpreadsheetApp.flush();
-    }
-
-    var link = driveCopy_(storage.folder, o, evidence);
-    row = locate_(tab, 1, o.id);
-    if (!row) throw Error('Order row is unavailable.');
-    var when = new Date().toISOString();
-    var number = nextOrderNumber_(tab, columns, o.contact);
-    var snapshot = orderSnapshot_(buyerKey_(o.buyer), o.lines);
-    var print = printColumns_(o.lines);
-    tab.getRange(row, columns.number).setValues([[number]]);
-    tab.getRange(row, columns.snapshot).setValues([[snapshot]]);
-    if (o.paidWith) tab.getRange(row, columns.paidWith).setValues([[textCell_(o.paidWith)]]);
-    if (o.upiReference)
-      tab.getRange(row, columns.upiReference).setValues([[textCell_(o.upiReference)]]);
-    writePrintColumns_(tab, row, columns, print);
-    var cells = tab.getRange(row, 1, 1, HEADINGS.length);
-    cells.setValues([orderRow_(o, evidence.fingerprint, when, link)]);
-    SpreadsheetApp.flush();
-    var saved = tab
-      .getRange(row, 1, 1, Math.max.apply(null, Object.values(columns)))
-      .getDisplayValues()[0];
-    if (
-      saved[0] !== o.id ||
-      saved[1] !== when ||
-      saved[11] !== link ||
-      saved[12] !== evidence.fingerprint ||
-      saved[columns.number - 1] !== number ||
-      saved[columns.snapshot - 1] !== snapshot ||
-      (o.paidWith && saved[columns.paidWith - 1] !== o.paidWith) ||
-      (o.upiReference && saved[columns.upiReference - 1] !== o.upiReference) ||
-      (print.name && saved[columns.printName - 1] !== print.name) ||
-      (print.number && saved[columns.printNumber - 1] !== print.number)
-    )
-      throw Error('The order row could not be confirmed.');
-    return savedReceipt_(o.id, saved, number);
+    reserved = reserveOrder_(handles.book, legacy, o, evidence, candidate);
   } finally {
     lock.releaseLock();
   }
+  if (reserved.result) return reserved.result;
+  var link = driveCopy_(handles.folder, o, evidence, reserved.proofId);
+  if (!lock.tryLock(12000)) return { ok: false, code: 'busy' };
+  try {
+    return finishOrder_(reserved.tab, reserved.columns, o, evidence, link);
+  } finally {
+    lock.releaseLock();
+  }
+}
+function reserveOrder_(book, legacy, o, evidence, candidate) {
+  var tab = orderTab_(book),
+    columns = orderColumns_(tab),
+    row = locate_(tab, 1, o.id), proofId;
+  if (row) {
+    var previous = tab.getRange(row, 1, 1, HEADINGS.length).getDisplayValues()[0];
+    if (!sameSubmission_(previous, evidence))
+      return { result: { ok: false, code: 'retry_different' } };
+    if (previous[1] && previous[11]) {
+      var previousNumber = tab.getRange(row, columns.number).getDisplayValues()[0][0];
+      return { result: savedReceipt_(o.id, previous, previousNumber) };
+    }
+    proofId = tab.getRange(row, columns.proofId).getDisplayValues()[0][0];
+    if (!proofId) {
+      if (!candidate) return { result: { ok: false, code: 'busy' } };
+      proofId = candidate;
+      tab.getRange(row, columns.proofId).setValues([[proofId]]);
+      SpreadsheetApp.flush();
+    }
+  } else {
+    if (locate_(tab, 11, o.utr) || (legacy && locate_(legacy.sheet, legacy.column, o.utr)))
+      return { result: { ok: false, code: 'reference_in_use' } };
+    if (!candidate) return { result: { ok: false, code: 'busy' } };
+    row = tab.getLastRow() + 1;
+    var maxRows = tab.getMaxRows();
+    if (row > maxRows) tab.insertRowsAfter(maxRows, 100);
+    tab.getRange(row, 2).setNumberFormat('@');
+    tab.getRange(row, 11).setNumberFormat('@');
+    proofId = candidate;
+    var pending = orderRow_(o, evidence.fingerprint, '', '');
+    while (pending.length < columns.proofId) pending.push('');
+    pending[columns.proofId - 1] = proofId;
+    tab.getRange(row, 1, 1, pending.length).setValues([pending]);
+    SpreadsheetApp.flush();
+  }
+  return { tab: tab, columns: columns, proofId: proofId };
+}
+function finishOrder_(tab, columns, o, evidence, link) {
+  var row = locate_(tab, 1, o.id);
+  if (!row) throw Error('Order row is unavailable.');
+  var previous = tab.getRange(row, 1, 1, HEADINGS.length).getDisplayValues()[0];
+  if (!sameSubmission_(previous, evidence)) return { ok: false, code: 'retry_different' };
+  if (previous[1] && previous[11]) {
+    var previousNumber = tab.getRange(row, columns.number).getDisplayValues()[0][0];
+    return savedReceipt_(o.id, previous, previousNumber);
+  }
+  var when = new Date().toISOString();
+  var number = nextOrderNumber_(tab, columns, o.contact);
+  var snapshot = orderSnapshot_(buyerKey_(o.buyer), o.lines);
+  var print = printColumns_(o.lines);
+  tab.getRange(row, columns.number).setValues([[number]]);
+  tab.getRange(row, columns.snapshot).setValues([[snapshot]]);
+  if (o.paidWith) tab.getRange(row, columns.paidWith).setValues([[textCell_(o.paidWith)]]);
+  if (o.upiReference)
+    tab.getRange(row, columns.upiReference).setValues([[textCell_(o.upiReference)]]);
+  writePrintColumns_(tab, row, columns, print);
+  var cells = tab.getRange(row, 1, 1, HEADINGS.length);
+  cells.setValues([orderRow_(o, evidence.fingerprint, when, link)]);
+  SpreadsheetApp.flush();
+  var saved = tab
+    .getRange(row, 1, 1, Math.max.apply(null, Object.values(columns)))
+    .getDisplayValues()[0];
+  if (
+    saved[0] !== o.id ||
+    saved[1] !== when ||
+    saved[11] !== link ||
+    saved[12] !== evidence.fingerprint ||
+    saved[columns.number - 1] !== number ||
+    saved[columns.snapshot - 1] !== snapshot ||
+    (o.paidWith && saved[columns.paidWith - 1] !== o.paidWith) ||
+    (o.upiReference && saved[columns.upiReference - 1] !== o.upiReference) ||
+    (print.name && saved[columns.printName - 1] !== print.name) ||
+    (print.number && saved[columns.printNumber - 1] !== print.number)
+  )
+    throw Error('The order row could not be confirmed.');
+  return savedReceipt_(o.id, saved, number);
 }
 
 function taggedItem_(form, type, tag, title, asTyped, optional) {
@@ -928,26 +1060,29 @@ function catalogue_(p) {
   }
   var homepageBanners = homepageBanners_(form);
   if (homepageBanners.length) draft.homepageBanners = homepageBanners;
+  var collection = collectionKey_(p, orderRoute_(p));
+  if (p['ORDER_COLLECTION_' + collection]) draft.collection = collection;
   draft.version = digest_(JSON.stringify(draft));
   return draft;
 }
 
-/** Run in the editor. Checks that your existing Google Form points to the Sheet you configured. */
+/** Run in the editor to check the catalogue and the configured order spreadsheet. */
 function checkOrderStorage() {
-  var p = properties_();
+  var props = PropertiesService.getScriptProperties(), p = props.getProperties();
   if (!/^[a-f0-9]{64}$/.test(p.MARC_SCRIPT_SECRET || ''))
     setupError_('Set MARC_SCRIPT_SECRET to your random 64-character hex key.');
-  var form = FormApp.openById(p.FORM_ID);
-  if (form.getDestinationId() !== p.RESPONSE_SHEET_ID)
-    setupError_('RESPONSE_SHEET_ID must be the Form’s linked spreadsheet ID.');
+  if (typeof Drive === 'undefined') setupError_('Add the Drive API v3 service.');
   var lock = LockService.getScriptLock();
   lock.waitLock(12000);
   try {
     openStorage_(p);
+    var route = orderRoute_(p), key = collectionKey_(p, route);
+    props.setProperty('ORDER_COLLECTION_' + key, JSON.stringify(route));
+    if (!p.ORDER_LEGACY_COLLECTION) props.setProperty('ORDER_LEGACY_COLLECTION', key);
   } finally {
     lock.releaseLock();
   }
-  var catalog = catalogue_(p);
+  var catalog = catalogue_(props.getProperties());
   console.log(
     'Order storage is ready. ' +
       catalog.products.length +
@@ -955,6 +1090,101 @@ function checkOrderStorage() {
       (catalog.ready ? 'open' : 'paused') +
       '.'
   );
+}
+
+function queueRequest_(p, data) {
+  var address = (p.STOREFRONT_URL || '').replace(/\/+$/, '');
+  if (!/^https:\/\/[A-Za-z0-9.-]+$/.test(address) || !/^[a-f0-9]{64}$/.test(p.MARC_SCRIPT_SECRET || ''))
+    setupError_('Check STOREFRONT_URL and MARC_SCRIPT_SECRET.');
+  var payload = JSON.stringify(data), issuedAt = Date.now();
+  var signature = hex_(Utilities.computeHmacSha256Signature(
+    'MARC order queue\n' + issuedAt + '\n' + payload,
+    p.MARC_SCRIPT_SECRET, Utilities.Charset.UTF_8));
+  var response = UrlFetchApp.fetch(address + '/api/order-queue', {
+    method: 'post', contentType: 'application/json',
+    payload: JSON.stringify({ issuedAt: issuedAt, payload: payload, signature: signature }),
+    followRedirects: false, muteHttpExceptions: true
+  });
+  if (response.getResponseCode() < 200 || response.getResponseCode() >= 300)
+    throw Error('Order queue endpoint returned ' + response.getResponseCode() + '.');
+  return response;
+}
+
+function queueJob_(response) {
+  var bytes = response.getContent();
+  var end = bytes.indexOf(10, 65);
+  if (bytes[64] !== 10 || end <= 65 || end > 210000)
+    throw Error('Could not read the queued order.');
+  var fingerprint = Utilities.newBlob(bytes.slice(0, 64)).getDataAsString('UTF-8');
+  var order = JSON.parse(Utilities.newBlob(bytes.slice(65, end)).getDataAsString('UTF-8'));
+  return { fingerprint: fingerprint, order: order, bytes: bytes.slice(end + 1) };
+}
+
+/** Check the signed worker endpoint and run one drain every minute. */
+function installOrderQueue() {
+  checkOrderStorage();
+  Drive.Files.generateIds({ count: 1, space: 'drive' });
+  queueRequest_(properties_(), { action: 'check' });
+  var triggers = ScriptApp.getProjectTriggers().filter(function (trigger) {
+    return trigger.getHandlerFunction() === 'processOrderQueue';
+  });
+  if (!triggers.length) ScriptApp.newTrigger('processOrderQueue').timeBased().everyMinutes(1).create();
+  triggers.slice(1).forEach(function (trigger) { ScriptApp.deleteTrigger(trigger); });
+  console.log('Order queue worker is installed.');
+}
+
+/** This can also be run manually by the Apps Script owner. */
+function processOrderQueue() {
+  var props = PropertiesService.getScriptProperties();
+  var lock = LockService.getScriptLock(), lease = Utilities.getUuid();
+  // Apps Script executions have a six-minute limit. Only one worker may drain at a time.
+  if (!lock.tryLock(3000)) return;
+  try {
+    var expires = Number((props.getProperty('ORDER_QUEUE_LEASE') || '').split(':')[0]);
+    if (expires > Date.now()) return;
+    props.setProperty('ORDER_QUEUE_LEASE', (Date.now() + 7 * 60000) + ':' + lease);
+  } finally {
+    lock.releaseLock();
+  }
+  var deadline = Date.now() + 4 * 60000;
+  var saved = 0, review = 0, retry = 0, attempted = 0;
+  try {
+    var cursor, p = props.getProperties();
+    do {
+      var page = JSON.parse(queueRequest_(p, { action: 'list', cursor: cursor }).getContentText());
+      cursor = page.cursor;
+      for (var i = 0; i < page.jobs.length; i++) {
+        if (Date.now() >= deadline) return;
+        var key = page.jobs[i];
+        try {
+          var response = queueRequest_(p, { action: 'read', key: key });
+          if (response.getResponseCode() === 204) continue;
+          attempted++;
+          var job = queueJob_(response);
+          var result = saveOrder_(p, job.order, job.bytes);
+          if (result.ok || result.code === 'reference_in_use' || result.code === 'retry_different') {
+            queueRequest_(p, { action: 'finish', key: key, id: job.order.id,
+              fingerprint: job.fingerprint, result: result });
+            if (result.ok) saved++;
+            else review++;
+          } else retry++;
+        } catch (e) {
+          retry++;
+        }
+      }
+    } while (cursor && Date.now() < deadline);
+  } finally {
+    if (lock.tryLock(3000)) {
+      try {
+        if ((props.getProperty('ORDER_QUEUE_LEASE') || '').split(':')[1] === lease)
+          props.deleteProperty('ORDER_QUEUE_LEASE');
+      } finally {
+        lock.releaseLock();
+      }
+    }
+    console.log('Order queue attempted ' + attempted + ', saved ' + saved +
+      ', needs attention ' + review + ', will retry ' + retry + '.');
+  }
 }
 
 /** Run in the editor to move print details from older orders into their own columns. */

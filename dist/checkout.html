@@ -11,11 +11,18 @@
         document.documentElement.classList.add('orders-page');
       }
     </script>
-    <link rel="icon" href="assets/marc-logo.png" />
-    <link rel="modulepreload" href="market-core.js?v=10" />
-    <link rel="stylesheet" href="market.css?v=23" />
+    <link rel="icon" href="assets/marc-favicon-64.png" type="image/png" sizes="64x64" />
+    <link
+      rel="preload"
+      href="assets/barlow-condensed-700.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="modulepreload" href="market-core.js?v=13" />
+    <link rel="stylesheet" href="market.css?v=26" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=13"></script>
+    <script type="module" src="checkout.js?v=14"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -211,6 +218,11 @@
             <button id="switch-order-account" type="button" class="text-btn">
               Use another Google account
             </button>
+          </section>
+          <section id="pending-order" hidden>
+            <h2 id="pending-title" tabindex="-1">Saving your order</h2>
+            <p id="pending-message" role="status"></p>
+            <p>Order reference <strong id="pending-reference"></strong></p>
           </section>
           <section id="receipt" hidden>
             <div class="receipt-mark" aria-hidden="true">✓</div>

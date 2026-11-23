@@ -16,6 +16,7 @@ import {
 import { loginReady, getUser, logout } from './auth.js';
 import { callScript, scriptEndpoint } from './script-client.js';
 import { validateCatalogue } from './catalogue.js';
+import { enqueueOrder, queueKey, queuedStatus, queueStore } from './order-queue.js';
 import { upiOrder, upiQr } from './upi.js';
 
 const groups = [
@@ -38,6 +39,12 @@ function storageReady(env) {
     scriptEndpoint(env.MARC_SCRIPT_URL) &&
     sha256Pattern.test(env.MARC_SCRIPT_SECRET || '')
   );
+}
+function queueEnabled(env) {
+  return env.MARC_ORDER_QUEUE_ENABLED === '1';
+}
+function queuedResponse(quote) {
+  return json({ id: quote.id, total: quote.total, lines: quote.lines, status: 'processing' }, 202);
 }
 function contactInfo(data, buyer) {
   const name = requiredText(data?.name, 120, 'your full name');
@@ -181,7 +188,7 @@ function isProof(bytes, mime) {
     bytes.toString('ascii', 8, 12) === 'WEBP'
   );
 }
-async function submit(req, env, buyer, fetcher) {
+async function submit(req, env, buyer, fetcher, store) {
   if (!storageReady(env)) fail(503, 'MARC is setting up order storage.');
   const type = req.headers.get('content-type') || '';
   if (!/^multipart\/form-data\s*;/i.test(type))
@@ -232,15 +239,27 @@ async function submit(req, env, buyer, fetcher) {
     lines: quote.lines,
     total: quote.total,
     payee: quote.payment.payee,
+    ...(quote.collection ? { collection: quote.collection } : {}),
     utr,
     ...(paidWith ? { paidWith } : {}),
     ...(quote.payment.upiReference && paidWith !== bankTransfer
       ? { upiReference: quote.payment.upiReference }
       : {}),
-    proof: { mime: proof.type, base64: bytes.toString('base64') }
+    proof: { mime: proof.type }
   };
   let result;
+  if (quote.queued || queueEnabled(env)) {
+    if (!env.BLOB_READ_WRITE_TOKEN) fail(503, 'MARC is setting up order storage.');
+    try {
+      result = await enqueueOrder(store, queueKey(env, quote), order, bytes);
+    } catch (e) {
+      if (e instanceof CheckoutError) throw e;
+      fail(503, 'We could not confirm the upload yet. Check this order again or retry with the same UTR and screenshot. Pay only once.');
+    }
+    return result.pending ? queuedResponse(quote) : orderResult(result, quote, env, buyer);
+  }
   try {
+    order.proof.base64 = bytes.toString('base64');
     result = await callScript(env, 'placeOrder', order, fetcher);
   } catch {
     fail(
@@ -248,6 +267,10 @@ async function submit(req, env, buyer, fetcher) {
       'Google has not confirmed the save yet. Retry Place order with the same UTR and screenshot. Pay only once.'
     );
   }
+  return orderResult(result, quote, env, buyer);
+}
+
+function orderResult(result, quote, env, buyer) {
   if (!result.ok) {
     if (result.code === 'reference_in_use')
       fail(
@@ -336,7 +359,7 @@ async function orderHistory(body, env, buyer, fetcher) {
   return json(result.data);
 }
 
-export function createCheckout({ env, fetcher = fetch }) {
+export function createCheckout({ env, fetcher = fetch, store = queueStore(env) }) {
   return async (req) => {
     try {
       const url = new URL(req.url),
@@ -350,7 +373,7 @@ export function createCheckout({ env, fetcher = fetch }) {
           user: buyer ? { name: buyer.name, email: buyer.email } : null,
           sessionRemainingMs: buyer ? Math.max(0, buyer.expires - Date.now()) : 0,
           loginReady: loginReady(env),
-          storageReady: storageReady(env)
+          storageReady: storageReady(env) && (!queueEnabled(env) || !!env.BLOB_READ_WRITE_TOKEN)
         });
       }
       if (req.method !== 'POST') fail(405, 'Open checkout to continue.');
@@ -359,11 +382,11 @@ export function createCheckout({ env, fetcher = fetch }) {
       if (action === 'logout') return logout();
       const buyer = getUser(req, env);
       if (!buyer) fail(401, 'Sign in with Google to continue.');
-      if (action === 'place') return await submit(req, env, buyer, fetcher);
+      if (action === 'place') return await submit(req, env, buyer, fetcher, store);
       const maxJSON =
         action === 'receipts' || action === 'history'
           ? 2600000
-          : action === 'resume'
+          : action === 'resume' || action === 'status'
             ? quoteMax + 128
             : action === 'quote'
               ? 64000
@@ -371,12 +394,14 @@ export function createCheckout({ env, fetcher = fetch }) {
       const body = await readJSON(req, maxJSON);
       switch (action) {
         case 'quote': {
-          if (!storageReady(env))
+          if (!storageReady(env) || (queueEnabled(env) && !env.BLOB_READ_WRITE_TOKEN))
             fail(503, 'MARC is setting up order storage.');
           if (typeof body.id !== 'string' || !orderPattern.test(body.id))
             fail(400, 'Start checkout again from the store.');
           const catalogue = await getCatalogue(origin, fetcher);
           if (!catalogue.ready) fail(409, 'Ordering is currently paused.');
+          if (queueEnabled(env) && !catalogue.collection)
+            fail(503, 'MARC is preparing the order sheet for this collection.');
           if (catalogue.version !== body.version)
             fail(
               409,
@@ -393,6 +418,8 @@ export function createCheckout({ env, fetcher = fetch }) {
             ...order,
             contact,
             lines,
+            ...(catalogue.collection ? { collection: catalogue.collection } : {}),
+            ...(queueEnabled(env) ? { queued: true } : {}),
             terms: catalogue.terms,
             payment: paymentForQuote(catalogue.payment, order, env),
             requiresPaidWith: true,
@@ -405,6 +432,26 @@ export function createCheckout({ env, fetcher = fetch }) {
         }
         case 'resume':
           return json(quoteView(openQuote(body.quote, env, buyer)));
+        case 'status': {
+          const quote = openQuote(body.quote, env, buyer);
+          if (!env.BLOB_READ_WRITE_TOKEN) {
+            if (quote.queued) fail(503, 'Order status is temporarily unavailable.');
+            return json({ id: quote.id, status: 'not_submitted' });
+          }
+          const result = await queuedStatus(store, queueKey(env, quote));
+          if (!result) return json({ id: quote.id, status: 'not_submitted' });
+          if (result.pending) return queuedResponse(quote);
+          if (!result.ok) return json({
+            id: quote.id,
+            total: quote.total,
+            lines: quote.lines,
+            status: 'needs_attention',
+            message: result.code === 'reference_in_use'
+              ? 'This transaction ID is already recorded. Check My orders or contact MARC with this reference.'
+              : 'Contact MARC with this reference so the team can check your payment submission.'
+          });
+          return orderResult(result, quote, env, buyer);
+        }
         case 'receipts':
           return json(ownReceipts(body.tokens, env, buyer));
         case 'history':

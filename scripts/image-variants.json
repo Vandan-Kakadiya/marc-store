@@ -25,12 +25,33 @@
       }
     ]
   },
+  "assets/marc-store-banner.webp": {
+    "sha256": "07c33e69aa2ec6306310545a8d4bea66c48e9e47eba557db91aee76e0539a60c",
+    "variants": [
+      {
+        "src": "assets/optimized/874e6b8b6a643588c696-768.webp",
+        "width": 768
+      },
+      {
+        "src": "assets/optimized/ec84a74867465a6264ea-1152.webp",
+        "width": 1152
+      },
+      {
+        "src": "assets/optimized/07c33e69aa2ec6306310-1536.webp",
+        "width": 1536
+      }
+    ]
+  },
   "assets/MARC-page-2.webp": {
     "sha256": "79f2b58dfb9f0a288b2967d2584e5bdcb65cdaa891427d216599288f0b4af406",
     "variants": [
       {
         "src": "assets/optimized/ab0e5569669b122fa9e6-768.webp",
         "width": 768
+      },
+      {
+        "src": "assets/optimized/8768f765fa577ebb795e-1152.webp",
+        "width": 1152
       },
       {
         "src": "assets/optimized/75a4b992099d8f4ff5d3-1536.webp",
@@ -46,6 +67,10 @@
         "width": 768
       },
       {
+        "src": "assets/optimized/e5986ee8b778970e3d51-1152.webp",
+        "width": 1152
+      },
+      {
         "src": "assets/optimized/6dadb271c5938cdfcdae-1536.webp",
         "width": 1536
       }
@@ -59,6 +84,10 @@
         "width": 768
       },
       {
+        "src": "assets/optimized/8ab09db1e55108054a9d-1152.webp",
+        "width": 1152
+      },
+      {
         "src": "assets/optimized/20082396214e9fa0b3de-1536.webp",
         "width": 1536
       }
@@ -70,6 +99,10 @@
       {
         "src": "assets/optimized/503bc2c955bc99d29b02-768.webp",
         "width": 768
+      },
+      {
+        "src": "assets/optimized/04fd069e34cbdcd7ce89-1152.webp",
+        "width": 1152
       },
       {
         "src": "assets/optimized/a35b995b0c4e98408dc5-1536.webp",
