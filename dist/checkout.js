@@ -392,19 +392,25 @@ function showPendingOrder(entry, turn) {
     draft = { ...draft, queued: true };
     save(sessionStorage, DRAFT, draft);
   }
-  const section = $('pending-order');
-  const focus = section.hidden;
+
   const needsAttention = entry.status === 'needs_attention';
+  const focus = $('pending-order').hidden;
+  const title = $('pending-title');
+  const detail = $('pending-message');
+  const reference = $('pending-reference');
+
   orderProgress.close();
   proof.proof.value = '';
+  title.textContent = needsAttention ? 'Order needs attention' : 'Order submitted';
+  detail.textContent = needsAttention ? entry.message : '';
+  detail.hidden = !needsAttention;
+  reference.textContent = needsAttention ? entry.id : '';
+  reference.parentElement.hidden = !needsAttention;
+
   show('pending-order');
   summary(entry.lines, true);
-  $('pending-title').textContent = needsAttention ? 'Order needs attention' : 'Saving your order';
-  $('pending-message').textContent = needsAttention ? entry.message :
-    'We have your payment screenshot. This page will update when your order is saved. Pay only once.';
-  $('pending-reference').textContent = entry.id;
-  if (focus) $('pending-title').focus({ preventScroll: true });
-  message('', !needsAttention);
+  if (focus) title.focus({ preventScroll: true });
+  message();
   if (!needsAttention) pollOrder(turn);
 }
 async function checkSubmission(turn) {
