@@ -109,7 +109,7 @@ export function photo(row, small = true) {
   }
 }
 const imageSizes = {
-  'detail-photo': '(max-width: 680px) 88vw, 480px',
+  'detail-photo': '(max-width: 680px) 88vw, (max-width: 1070px) 64vw, 680px',
   'campaign-photo': '(max-width: 680px) 92vw, (max-width: 1568px) 50vw, 770px',
   thumb: '64px'
 };
@@ -231,7 +231,14 @@ function saveCatalogue(data) {
           (src) => typeof src === 'string' && src !== p.image && photo({ image: src })
         ))].slice(0, 2)
       : [];
-    return p.skus.map((s) => ({
+    const productInfo = {
+      ...(typeof p.details === 'string' && p.details ? { details: p.details } : {})
+    };
+    for (const field of ['detailsImage', 'sizeChart']) {
+      const image = p[field];
+      if (typeof image === 'string' && photo({ image })) productInfo[field] = image;
+    }
+    return p.skus.map((s, index) => ({
       sku: s.sku,
       name: p.name,
       colour: p.colour,
@@ -242,7 +249,8 @@ function saveCatalogue(data) {
         : [],
       image: p.image,
       imageVariants,
-      extraImages
+      extraImages,
+      ...(index === 0 ? productInfo : {})
     }));
   });
   const catalog = {

@@ -15,7 +15,7 @@ import {
   publishedCatalogue,
   read,
   save
-} from './market-core.js?v=9';
+} from './market-core.js?v=12';
 const published = publishedCatalogue();
 let catalog = published || cachedCatalogue(),
   bag = getBag(),
@@ -26,7 +26,8 @@ let catalog = published || cachedCatalogue(),
   selectedQuantity = 1,
   activeGroup = '',
   refreshTime = published ? Date.now() : 0;
-let toastTimer, activePhoto, activeBanners;
+let toastTimer, activeProductMedia, activeBanners;
+let activeProductTab = 0;
 const groups = () =>
   Object.values(
     catalog.skus.reduce((all, row) => {
@@ -160,9 +161,11 @@ function openProduct(rows) {
   activeGroup = groupKey(rows);
   selected = rows.length === 1 ? rows[0].sku : '';
   selectedQuantity = 1;
-  activePhoto = null;
+  activeProductMedia = null;
+  activeProductTab = 0;
   renderProduct(rows);
   $('product').showModal();
+  $('product-body').scrollTop = 0;
 }
 function createGallery(photos) {
   const gallery = node('div', 'product-gallery');
@@ -245,6 +248,7 @@ function setupCarousel(carousel, track, slideName) {
       if (!track.isConnected || dialog?.open === false) return;
       if (
         document.hidden ||
+        track.closest('[hidden]') ||
         carousel.querySelector(':focus-visible') ||
         (!dialog && document.querySelector('dialog[open]'))
       ) {
@@ -299,32 +303,122 @@ function setupCarousel(carousel, track, slideName) {
   carousel.append(controls);
   restartRotation();
 }
-function renderProductMedia(row, info) {
-  const body = $('product-body');
+function appendProductInfoImage(panel, image, alt, fallback) {
+  const src = photo({ image }, false);
+  if (!src) {
+    if (fallback) panel.append(fallback);
+    return;
+  }
+  const img = node('img', 'detail-content-image');
+  img.alt = alt;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.addEventListener('error', () => {
+    if (fallback) img.replaceWith(fallback);
+    else img.remove();
+  }, { once: true });
+  img.src = src;
+  panel.append(img);
+}
+function createSizeChart(row, sizes) {
+  const chart = node('div', 'detail-facts');
+  const message = node('p', 'detail-note', 'Size measurements are unavailable.');
+  const available = node('p');
+  available.append(node('strong', '', 'Available sizes'), ' ' + sizes.join(' · '));
+  chart.append(available);
+  appendProductInfoImage(chart, row.sizeChart, row.name + ' size chart', message);
+  return chart;
+}
+function createProductTabs(row, sizes) {
   const extras = row.extraImages ?? [];
-  const photos = JSON.stringify([row.image, extras, row.imageVariants]);
-  // Keep the current slide when the shopper changes size.
-  if (activePhoto === photos) {
+  const photos = extras.length
+    ? createGallery([row, ...extras.map((image) => ({ ...row, image, imageVariants: [] }))])
+    : picture(row, 'detail-photo');
+  const details = node('div', 'detail-facts');
+  if (row.details) details.append(node('p', '', row.details));
+  appendProductInfoImage(details, row.detailsImage, row.name + ' details');
+  const facts = node('dl', 'product-facts');
+  facts.append(
+    node('dt', '', 'Colour'), node('dd', '', row.colour),
+    node('dt', '', 'Available sizes'), node('dd', '', sizes.join(' · '))
+  );
+  details.append(facts);
+
+  const media = node('div', 'detail-media');
+  const tabs = node('div', 'product-tabs');
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', 'Product information');
+  media.append(tabs);
+  const views = [
+    ['photos', 'Photos', photos],
+    ['details', 'Details', details],
+    ['size-chart', 'Size chart', createSizeChart(row, sizes)]
+  ].map(([id, label, content], index) => {
+    const tab = btn(label, 'product-tab', () => selectTab(index));
+    tab.id = 'product-tab-' + id;
+    tab.setAttribute('role', 'tab');
+    const panel = node('div', 'product-panel');
+    panel.id = 'product-panel-' + id;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', tab.id);
+    panel.tabIndex = 0;
+    panel.append(content);
+    tab.setAttribute('aria-controls', panel.id);
+    tabs.append(tab);
+    media.append(panel);
+    return { tab, panel };
+  });
+  function selectTab(index) {
+    activeProductTab = index;
+    views.forEach(({ tab, panel }, position) => {
+      const selectedTab = position === index;
+      tab.tabIndex = selectedTab ? 0 : -1;
+      tab.setAttribute('aria-selected', String(selectedTab));
+      panel.hidden = !selectedTab;
+    });
+  }
+  tabs.addEventListener('keydown', (event) => {
+    const index = views.findIndex(({ tab }) => tab === event.target);
+    const next = {
+      ArrowLeft: (index + views.length - 1) % views.length,
+      ArrowRight: (index + 1) % views.length,
+      Home: 0,
+      End: views.length - 1
+    }[event.key];
+    if (!Number.isInteger(next)) return;
+    event.preventDefault();
+    selectTab(next);
+    views[next].tab.focus();
+  });
+  selectTab(activeProductTab);
+  return media;
+}
+function renderProductLayout(rows, info) {
+  const body = $('product-body');
+  const product = rows[0];
+  const sizes = rows.map((row) => row.size);
+  const media = JSON.stringify([
+    product.name, product.colour, sizes, product.image, product.imageVariants,
+    product.extraImages, product.details, product.detailsImage, product.sizeChart
+  ]);
+  // Keep the selected tab and photo when the shopper changes size.
+  if (activeProductMedia === media) {
     body.lastElementChild.replaceWith(info);
     return;
   }
-  activePhoto = photos;
-  const media = extras.length
-    ? createGallery([row, ...extras.map((image) => ({ ...row, image, imageVariants: [] }))])
-    : picture(row, 'detail-photo');
-  body.replaceChildren(media, info);
+  activeProductMedia = media;
+  const header = node('header', 'detail-header');
+  const title = node('h2', '', product.name);
+  title.id = 'product-title';
+  header.append(title, node('p', 'modal-sub', product.colour));
+  body.replaceChildren(header, createProductTabs(product, sizes), info);
 }
 function renderProduct(rows) {
   if (!rows.some((s) => s.sku === selected))
     selected = rows.length === 1 ? rows[0].sku : '';
-  const picked = rows.find((s) => s.sku === selected),
-    row = picked || rows[0],
-    info = node('section', 'detail-info');
-  const title = node('h2', '', row.name);
-  title.id = 'product-title';
+  const picked = rows.find((s) => s.sku === selected);
+  const info = node('section', 'detail-info');
   info.append(
-    title,
-    node('p', 'modal-sub', row.colour),
     node(
       'p',
       'detail-price',
@@ -425,7 +519,7 @@ function renderProduct(rows) {
   updatePurchaseOptions();
   actions.append(add, buy);
   info.append(options, actions, orderNote);
-  renderProductMedia(row, info);
+  renderProductLayout(rows, info);
 }
 function begin(flow, items) {
   const pending = read(sessionStorage, DRAFT, null);

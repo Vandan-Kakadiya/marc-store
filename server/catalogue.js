@@ -77,6 +77,7 @@ export function validateCatalogue(obj) {
     )
       throw Error('Invalid product in catalogue.');
     groups.add(p.id);
+    const details = typeof p.details === 'string' ? p.details.trim().slice(0, 600) : '';
     const sizes = new Set();
     const skus = p.skus.map((s) => {
       const printFields = s?.printFields ?? [];
@@ -114,7 +115,10 @@ export function validateCatalogue(obj) {
       colour: p.colour,
       image: p.image,
       skus,
-      ...(extraImages.length ? { extraImages } : {})
+      ...(extraImages.length ? { extraImages } : {}),
+      ...(details ? { details } : {}),
+      ...(p.detailsImage && imageOK(p.detailsImage) ? { detailsImage: p.detailsImage } : {}),
+      ...(p.sizeChart && imageOK(p.sizeChart) ? { sizeChart: p.sizeChart } : {})
     };
   });
   if (codes.size > 1000) throw Error('The catalogue has too many options.');

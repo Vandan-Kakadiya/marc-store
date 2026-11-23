@@ -21,7 +21,9 @@ function matchesImage(bytes, format) {
 export async function saveDriveProductPhotos(assets, products, output, fetchPhoto) {
   const needed = new Set(
     products
-      .flatMap((product) => [product.image, ...(product.extraImages ?? [])])
+      .flatMap((product) => [
+        product.image, ...(product.extraImages ?? []), product.detailsImage, product.sizeChart
+      ])
       .filter((src) => assetPattern.test(src))
   );
   if (!Array.isArray(assets) || assets.length !== needed.size)

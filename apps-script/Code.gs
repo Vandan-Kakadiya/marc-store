@@ -652,15 +652,30 @@ function homepageBanners_(form) {
   }
   return banners;
 }
+function optionalSkuImage_(value, label, sku) {
+  try {
+    return localImage_(value);
+  } catch (error) {
+    console.warn('Check ' + label + ' for ' + sku + '. ' + error.message);
+    return '';
+  }
+}
 function parseSku_(line) {
   var fields = String(line)
     .split('|')
     .map(function (s) {
       return s.trim();
     });
+  var metadata = Object.create(null);
+  var photoFields = fields.slice(5).filter(function (field) {
+    var option = field.match(/^(print|details|details-image|size-chart)\s*=\s*([\s\S]*)$/i);
+    if (!option) return true;
+    metadata[option[1].toLowerCase()] = option[2];
+    return false;
+  });
   var printFields = [];
-  if (fields.length > 5 && /^print\s*=/i.test(fields[fields.length - 1])) {
-    var printOptions = fields.pop().replace(/^print\s*=/i, '').split(',').map(function (option) {
+  if (metadata.print !== undefined) {
+    var printOptions = metadata.print.split(',').map(function (option) {
       return option.trim().toLowerCase();
     });
     if (printOptions.some(function (option) { return option !== 'name' && option !== 'number'; }))
@@ -669,7 +684,7 @@ function parseSku_(line) {
   }
   if (
     fields.length < 5 ||
-    fields.length > 8 ||
+    photoFields.length > 3 ||
     !/^[A-Za-z0-9_-]{1,64}$/.test(fields[0]) ||
     !fields[1] ||
     fields[1].length > 140 ||
@@ -688,12 +703,7 @@ function parseSku_(line) {
         '.'
     );
   var price = fields[4].split('.');
-  var images = Array.from(new Set(fields.slice(5).filter(Boolean).map(localImage_)));
-  if (!images.length && /\bpolos?\b/i.test(fields[1])) {
-    if (/^white$/i.test(fields[2])) images.push('assets/polo-white.png');
-    if (/^(maroon|burgundy)$/i.test(fields[2]))
-      images.push('assets/polo-maroon.png');
-  }
+  var images = Array.from(new Set(photoFields.filter(Boolean).map(localImage_)));
   return {
     sku: fields[0],
     name: fields[1],
@@ -702,7 +712,10 @@ function parseSku_(line) {
     paise:
       Number(price[0]) * 100 + Number(((price[1] || '') + '00').slice(0, 2)),
     images: images,
-    printFields: printFields
+    printFields: printFields,
+    details: (metadata.details || '').replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 600).trim(),
+    detailsImage: optionalSkuImage_(metadata['details-image'], 'details image', fields[0]),
+    sizeChart: optionalSkuImage_(metadata['size-chart'], 'size chart', fields[0])
   };
 }
 function products_(rows) {
@@ -731,16 +744,22 @@ function products_(rows) {
     var group = entry[0],
       options = entry[1],
       first = options[0];
-    var galleries = options.filter(function (row) {
+    // One size can supply the photos and details for the whole product colour.
+    var photoRows = options.filter(function (row) {
       return row.images.length > 1;
     });
-    // One size can supply the photo list for the whole product colour.
-    var photoRows = galleries.length ? galleries : options;
-    var images = photoRows[0].images;
+    if (!photoRows.length) photoRows = options.filter(function (row) {
+      return row.images.length > 0;
+    });
+    var images = photoRows.length ? photoRows[0].images : [];
     if (photoRows.some(function (row) {
       return row.images.join('|') !== images.join('|');
     }))
       throw Error('Use the same photo list for ' + first.name + ' (' + first.colour + ').');
+    if (!images.length && /\bpolos?\b/i.test(first.name)) {
+      if (/^white$/i.test(first.colour)) images.push('assets/polo-white.png');
+      if (/^(maroon|burgundy)$/i.test(first.colour)) images.push('assets/polo-maroon.png');
+    }
     var product = {
       id: digest_(group).slice(0, 24),
       name: first.name,
@@ -753,6 +772,10 @@ function products_(rows) {
       })
     };
     if (images.length > 1) product.extraImages = images.slice(1);
+    ['details', 'detailsImage', 'sizeChart'].forEach(function (field) {
+      var row = options.find(function (option) { return option[field]; });
+      if (row) product[field] = row[field];
+    });
     return product;
   });
 }
@@ -804,7 +827,7 @@ function readProductPhoto_(p, data) {
 function resolveProductPhotos_(products, p) {
   var drive = new Map();
   products.forEach(function (product) {
-    var photos = [product.image].concat(product.extraImages || []).map(function (src) {
+    function resolvePhoto(src) {
       if (!src.startsWith('drive:')) return src;
       var id = src.slice(6);
       if (!drive.has(id)) {
@@ -826,11 +849,18 @@ function resolveProductPhotos_(products, p) {
       }
       var asset = drive.get(id);
       return asset ? asset.src : '';
-    }).filter(Boolean);
+    }
+    var photos = [product.image].concat(product.extraImages || []).map(resolvePhoto).filter(Boolean);
     photos = Array.from(new Set(photos));
     product.image = photos[0] || '';
     if (photos.length > 1) product.extraImages = photos.slice(1);
     else delete product.extraImages;
+    ['detailsImage', 'sizeChart'].forEach(function (field) {
+      if (!product[field]) return;
+      var image = resolvePhoto(product[field]);
+      if (image) product[field] = image;
+      else delete product[field];
+    });
   });
   return Array.from(drive.values()).filter(Boolean);
 }
