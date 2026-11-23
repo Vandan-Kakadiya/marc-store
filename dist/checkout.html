@@ -22,7 +22,7 @@
     <link rel="modulepreload" href="market-core.js?v=14" />
     <link rel="stylesheet" href="market.css?v=26" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=16"></script>
+    <script type="module" src="checkout.js?v=17"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -206,9 +206,13 @@
                   required
                 /><small>PNG, JPG or WebP · up to 4 MB</small></label
               ><button class="action orange" id="submit-proof">
-                Place order <span aria-hidden="true">→</span>
+                <span id="submit-proof-label">Place order</span> <span aria-hidden="true">→</span>
               </button>
             </form>
+            <div id="upload-recovery" hidden>
+              <p>Checkout reference <strong id="recovery-reference"></strong></p>
+              <p>If you need help, contact MARC privately through the channel that shared this store. Keep your UTR and payment screenshot.</p>
+            </div>
             <button class="text-btn" id="cancel-unpaid">
               Cancel this unpaid checkout
             </button>

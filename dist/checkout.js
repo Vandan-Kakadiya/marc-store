@@ -105,6 +105,7 @@ function expireSession(
   $('past-orders').replaceChildren();
   $('order-number').textContent = '';
   $('pending-reference').textContent = '';
+  $('recovery-reference').textContent = '';
   $('order-time').textContent = '';
   $('order-time').removeAttribute('datetime');
   summary([]);
@@ -371,12 +372,16 @@ function openPayment(record) {
   const bankOption = $('bank-payment-method');
   bankOption.hidden = !bank;
   bankOption.disabled = !bank;
+  proof.utr.value ||= draft.utr || '';
   proof.paidWith.value = draft.paidWith || '';
   proof.paidWith.disabled = !!draft.sent;
   $('paid-with-label').hidden = Boolean(draft.sent && !draft.paidWith);
   updateReferenceField();
 
   $('cancel-unpaid').hidden = !!draft.sent;
+  $('submit-proof-label').textContent = draft.sent ? 'Retry upload' : 'Place order';
+  $('upload-recovery').hidden = !draft.sent;
+  $('recovery-reference').textContent = draft.sent ? draft.id : '';
   $('proof-tip').textContent = draft.sent
     ? 'Retry with the same UTR and screenshot. Pay only once.'
     : 'Submit your UTR and screenshot. MARC checks the bank record before confirming payment.';
@@ -404,6 +409,7 @@ async function finishSubmission(saved, turn) {
   if (saved.id !== draft?.id || !saved.token)
     throw Error('The order save could not be confirmed.');
   const completed = { ...draft, receipt: saved.token };
+  delete completed.utr;
   const savedDraft = save(sessionStorage, DRAFT, completed);
   draft = completed;
   clearTimeout(statusTimer);
@@ -460,27 +466,27 @@ function showPendingOrder(entry, turn) {
   if (!needsAttention) pollOrder(turn);
 }
 async function checkSubmission(turn) {
-  if (turn !== loadCount || !draft?.quote) return true;
+  if (turn !== loadCount || !draft?.quote) return 'handled';
   try {
     const entry = await post('status', { quote: draft.quote });
-    if (turn !== loadCount) return true;
+    if (turn !== loadCount) return 'handled';
     if (entry.id !== draft.id) throw Error('The order status could not be confirmed.');
     if (entry.token) await finishSubmission(entry, turn);
     else if (entry.status === 'processing' || entry.status === 'needs_attention')
       showPendingOrder(entry, turn);
-    else if (entry.status === 'not_submitted' && !draft.queued) return false;
+    else if (entry.status === 'not_submitted' && !draft.queued) return 'not_submitted';
     else throw Error('The order status could not be confirmed.');
   } catch (e) {
-    if (turn !== loadCount) return true;
+    if (turn !== loadCount) return 'handled';
     if (e.status === 401) {
       expireSession('Sign in with the same Google account to check your order.');
-      return true;
+      return 'handled';
     }
-    if (!draft.queued && e.status !== 403 && e.status !== 409) return false;
+    if (!draft.queued && e.status !== 403 && e.status !== 409) return 'unavailable';
     message(e.message + ' Order reference ' + draft.id, true);
     if (draft.queued && e.status !== 403 && e.status !== 409) pollOrder(turn);
   }
-  return true;
+  return 'handled';
 }
 async function myOrders(turn) {
   show('orders');
@@ -682,7 +688,7 @@ async function boot() {
       return;
     }
     if (draft.quote) {
-      if (draft.sent && await checkSubmission(turn)) return;
+      if (draft.sent && await checkSubmission(turn) === 'handled') return;
       if (turn !== loadCount) return;
       const record = await post('resume', { quote: draft.quote });
       if (turn === loadCount) openPayment(record);
@@ -816,6 +822,54 @@ $('copy-upi').onclick = async () => {
   }
 };
 
+function showUploadRecovery() {
+  $('submit-proof-label').textContent = 'Retry upload';
+  $('upload-recovery').hidden = false;
+  $('recovery-reference').textContent = draft.id;
+  message('We’re still checking your payment proof. Pay only once. Check again or retry the upload.', true);
+}
+async function sendProof(payload, pending, turn) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const progress = startOrderProgress();
+    try {
+      const saved = await api('place', {
+        method: 'POST',
+        body: payload,
+        signal: AbortSignal.timeout(65000)
+      });
+      if (turn !== loadCount) return;
+      if (saved.id !== pending.id) throw Error('The order save could not be confirmed.');
+      if (saved.status === 'processing') showPendingOrder(saved, turn);
+      else await finishSubmission(saved, turn);
+      return;
+    } catch (error) {
+      if (turn !== loadCount) return;
+      if (error.status === 401) {
+        expireSession('Sign in with the same Google account to finish uploading your payment proof.');
+        return;
+      }
+      if (error.status && error.status < 500 && error.status !== 429) {
+        message(error.message + ' Checkout reference ' + pending.id);
+        return;
+      }
+
+      orderProgress.close();
+      const status = await checkSubmission(turn);
+      if (turn !== loadCount || status === 'handled') return;
+      if (status !== 'not_submitted' || attempt || error.status === 429) {
+        showUploadRecovery();
+        return;
+      }
+      message('Retrying your upload. Pay only once.');
+    } finally {
+      clearInterval(progress);
+      orderProgress.close();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1200 + Math.random() * 1200));
+    if (turn !== loadCount) return;
+  }
+}
+
 $('proof-form').onsubmit = async (e) => {
   e.preventDefault();
   if (!user || !order || !draft?.quote || $('submit-proof').disabled) return;
@@ -832,11 +886,12 @@ $('proof-form').onsubmit = async (e) => {
   const payload = new FormData();
   const paidWith = draft.paidWith || proof.paidWith.value;
   payload.set('quote', draft.quote);
-  payload.set('utr', proof.utr.value.trim());
+  const utr = proof.utr.value.trim();
+  payload.set('utr', utr);
   payload.set('proof', image, image.name);
   if (paidWith) payload.set('paidWith', paidWith);
 
-  const pending = { ...draft, sent: true, ...(paidWith ? { paidWith } : {}) };
+  const pending = { ...draft, sent: true, utr, ...(paidWith ? { paidWith } : {}) };
   if (!save(sessionStorage, DRAFT, pending)) {
     message(
       'Allow browser storage so you can recover this order if the connection drops.'
@@ -852,38 +907,9 @@ $('proof-form').onsubmit = async (e) => {
   $('submit-proof').disabled = true;
   message();
 
-  let progressTimer;
   try {
-    progressTimer = startOrderProgress();
-    const saved = await api('place', {
-      method: 'POST',
-      body: payload,
-      signal: AbortSignal.timeout(65000)
-    });
-    if (saved.id !== pending.id)
-      throw Error('The order save could not be confirmed.');
-    clearInterval(progressTimer);
-    if (saved.status === 'processing') {
-      if (turn === loadCount) showPendingOrder(saved, turn);
-      return;
-    }
-    await finishSubmission(saved, turn);
-  } catch (e) {
-    if (turn !== loadCount) return;
-    if (e.status === 401) {
-      expireSession(
-        'Sign in with the same Google account, then retry using the same UTR and screenshot.'
-      );
-    } else if (e.status === 503 || !e.status) {
-      orderProgress.close();
-      if (!await checkSubmission(turn) && turn === loadCount)
-        message(e.message + ' Order reference ' + pending.id, true);
-    } else {
-      message(e.message + ' Order reference ' + pending.id);
-    }
+    await sendProof(payload, pending, turn);
   } finally {
-    clearInterval(progressTimer);
-    orderProgress.close();
     $('submit-proof').disabled = false;
   }
 };

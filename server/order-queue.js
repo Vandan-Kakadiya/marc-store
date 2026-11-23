@@ -10,26 +10,26 @@ const conflicts = ['reference_in_use', 'retry_different'];
 const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
 
 export function queueStore(env, sdk = blob) {
-  const options = () => ({
+  const options = (timeout = 12000) => ({
     token: env.BLOB_READ_WRITE_TOKEN,
-    abortSignal: AbortSignal.timeout(12000)
+    abortSignal: AbortSignal.timeout(timeout)
   });
   return {
     async get(path) {
       const object = await sdk.get(path, { ...options(), access: 'private', useCache: false });
       return object?.stream ?? null;
     },
-    async has(path) {
+    async has(path, timeout) {
       try {
-        return !!(await sdk.head(path, options()));
+        return !!(await sdk.head(path, options(timeout)));
       } catch (e) {
         if (e instanceof blob.BlobNotFoundError) return false;
         throw e;
       }
     },
-    put(path, body, contentType, ttlDays) {
+    put(path, body, contentType, ttlDays, timeout) {
       return sdk.put(path, body, {
-        ...options(), access: 'private', addRandomSuffix: false,
+        ...options(timeout), access: 'private', addRandomSuffix: false,
         allowOverwrite: false, contentType, ...(ttlDays ? { ttlDays } : {})
       });
     },
@@ -39,6 +39,42 @@ export function queueStore(env, sdk = blob) {
     async list(prefix, cursor) {
       const page = await sdk.list({ ...options(), prefix, cursor, limit: 100 });
       return { paths: page.blobs.map((item) => item.pathname), cursor: page.hasMore ? page.cursor : undefined };
+    }
+  };
+}
+
+export function queueReadiness(store) {
+  const windowMs = 5 * 60000;
+  let recent, pausedUntil = 0;
+
+  async function check(slot) {
+    const marker = `${root}checks/payment-${slot}.txt`;
+    if (await store.has(marker, 2200)) return true;
+    try {
+      await store.put(marker, 'ready', 'text/plain', 1, 2200);
+      return true;
+    } catch {
+      // A concurrent checkout may already have written the shared marker.
+      return store.has(marker, 2200);
+    }
+  }
+
+  return {
+    async ready() {
+      const now = Date.now(), slot = Math.floor(now / windowMs);
+      if (now < pausedUntil) return false;
+      if (!recent || recent.slot !== slot || now >= recent.until) {
+        const next = { slot, until: (slot + 1) * windowMs };
+        next.result = check(slot).catch(() => false).then((available) => {
+          if (!available) next.until = Date.now() + 15000;
+          return available;
+        });
+        recent = next;
+      }
+      return await recent.result && Date.now() >= pausedUntil;
+    },
+    pause() {
+      pausedUntil = (Math.floor(Date.now() / windowMs) + 1) * windowMs;
     }
   };
 }

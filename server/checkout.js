@@ -20,7 +20,7 @@ import { readBag, writeBag } from './bag.js';
 import { callScript, scriptEndpoint } from './script-client.js';
 import { validateCatalogue } from './catalogue.js';
 import {
-  enqueueOrder, queueKey, queuedNumber, queuedStatus, queueStore, rememberQueuedNumber
+  enqueueOrder, queueKey, queuedNumber, queuedStatus, queueReadiness, queueStore, rememberQueuedNumber
 } from './order-queue.js';
 import { upiOrder, upiQr } from './upi.js';
 
@@ -212,7 +212,7 @@ function isProof(bytes, mime) {
     bytes.toString('ascii', 8, 12) === 'WEBP'
   );
 }
-async function submit(req, env, buyer, fetcher, store) {
+async function submit(req, env, buyer, fetcher, store, queueHealth) {
   if (!storageReady(env)) fail(503, 'MARC is setting up order storage.');
   const type = req.headers.get('content-type') || '';
   if (!/^multipart\/form-data\s*;/i.test(type))
@@ -279,6 +279,7 @@ async function submit(req, env, buyer, fetcher, store) {
       result = await enqueueOrder(store, key, order, bytes);
     } catch (e) {
       if (e instanceof CheckoutError) throw e;
+      queueHealth.pause();
       fail(503, 'We could not confirm the upload yet. Check this order again or retry with the same UTR and screenshot. Pay only once.');
     }
     if (!result.pending) return orderResult(result, quote, env, buyer);
@@ -389,6 +390,7 @@ async function orderHistory(body, env, buyer, fetcher) {
 export function createCheckout({
   env, fetcher = fetch, store = queueStore(env), accounts = createAccountStore(env, fetcher)
 }) {
+  const queueHealth = queueReadiness(store);
   return async (req) => {
     try {
       const url = new URL(req.url),
@@ -416,7 +418,7 @@ export function createCheckout({
       if (action === 'logout') return await logout(req, env, accounts);
       const buyer = await getUser(req, env, accounts);
       if (!buyer) fail(401, 'Sign in with Google to continue.');
-      if (action === 'place') return await submit(req, env, buyer, fetcher, store);
+      if (action === 'place') return await submit(req, env, buyer, fetcher, store, queueHealth);
       const maxJSON =
         action === 'receipts' || action === 'history'
           ? 2600000
@@ -464,6 +466,8 @@ export function createCheckout({
           const token = seal(quote, quotePurpose, env.MARC_SESSION_KEY);
           if (token.length > quoteMax)
             fail(400, 'This order contains too many details. Split it into smaller orders before paying.');
+          if (quote.queued && !await queueHealth.ready())
+            fail(503, 'Payments are paused while MARC checks order uploads. Please check again shortly.');
           return json({ ...quoteView(quote), token });
         }
         case 'resume':

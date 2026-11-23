@@ -642,6 +642,7 @@ function reserveQueuedOrder_(p, request) {
   var o = request.order;
   validateOrder_(o);
   if (!/^[a-f0-9]{64}$/.test(request.proofHash || '')) throw Error('Invalid screenshot hash.');
+  wakeOrderQueue_(PropertiesService.getScriptProperties());
   var evidence = submissionEvidence_(o, request.proofHash);
   var route = orderProperties_(p, o.collection);
   var book = orderBook_(route);
@@ -1222,16 +1223,29 @@ function installOrderQueue() {
   console.log('Order queue worker is installed.');
 }
 
+function wakeOrderQueue_(props) {
+  var now = Date.now();
+  if (Number(props.getProperty('ORDER_QUEUE_AWAKE_UNTIL') || 0) < now + 2 * 60000)
+    props.setProperty('ORDER_QUEUE_AWAKE_UNTIL', String(now + 5 * 60000));
+}
+
 /** This can also be run manually by the Apps Script owner. */
-function processOrderQueue() {
+function processOrderQueue(event) {
   var props = PropertiesService.getScriptProperties();
   var lock = LockService.getScriptLock(), lease = Utilities.getUuid();
   // Apps Script executions have a six-minute limit. Only one worker may drain at a time.
   if (!lock.tryLock(3000)) return;
   try {
+    var now = Date.now();
     var expires = Number((props.getProperty('ORDER_QUEUE_LEASE') || '').split(':')[0]);
-    if (expires > Date.now()) return;
-    props.setProperty('ORDER_QUEUE_LEASE', (Date.now() + 7 * 60000) + ':' + lease);
+    if (expires > now) return;
+    // Use the scheduled execution for new work. Check once an hour while idle
+    // in case a proof upload succeeded but its wake-up request was interrupted.
+    if (event && event.triggerUid &&
+        Number(props.getProperty('ORDER_QUEUE_AWAKE_UNTIL') || 0) <= now &&
+        Number(props.getProperty('ORDER_QUEUE_LAST_POLL') || 0) > now - 60 * 60000) return;
+    props.setProperty('ORDER_QUEUE_LEASE', (now + 7 * 60000) + ':' + lease);
+    props.setProperty('ORDER_QUEUE_LAST_POLL', String(now));
   } finally {
     lock.releaseLock();
   }
@@ -1241,6 +1255,7 @@ function processOrderQueue() {
     var cursor, p = props.getProperties();
     do {
       var page = JSON.parse(queueRequest_(p, { action: 'list', cursor: cursor }).getContentText());
+      if (page.jobs.length) wakeOrderQueue_(props);
       cursor = page.cursor;
       for (var i = 0; i < page.jobs.length; i++) {
         if (Date.now() >= deadline) return;
