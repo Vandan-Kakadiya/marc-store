@@ -70,6 +70,25 @@ async function updateBag(reduce, reportError = toast) {
     return false;
   }
 }
+function customizationRibbon(rows) {
+  const fields = new Set(rows.flatMap((row) => row.printFields ?? []));
+  if (!fields.size) return null;
+
+  let options = fields.has('name') ? 'Name' : 'Number';
+  if (fields.size === 2) {
+    const bothOnOneSku = rows.some((row) => row.printFields?.length === 2);
+    options = bothOnOneSku ? 'Name & number' : 'Name or number';
+  }
+
+  const ribbon = node('span', 'customize-ribbon');
+  const face = node('span', 'customize-ribbon-face');
+  face.append(
+    node('span', 'customize-ribbon-label', 'Customize'),
+    node('span', '', options)
+  );
+  ribbon.append(face);
+  return ribbon;
+}
 function buildCards() {
   cardsFor = catalog;
   cards = groups().map((rows) => {
@@ -91,6 +110,8 @@ function buildCards() {
           money(Math.min(...prices))
       )
     );
+    const ribbon = customizationRibbon(rows);
+    if (ribbon) card.append(ribbon);
     // One line per option, so a search never matches across two options.
     const text = rows
       .map((s) => [s.name, s.colour, s.size, s.sku].join(' '))
