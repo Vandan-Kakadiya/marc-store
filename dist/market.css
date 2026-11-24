@@ -1015,8 +1015,50 @@ dialog::backdrop {
   font-size: clamp(32px, 7vw, 50px);
   line-height: 1.08;
 }
-.payment-total p {
-  margin: 2px 0 0;
+.payment-payee {
+  margin-top: 9px;
+  padding: 12px 14px;
+  border: 1px solid #efceba;
+  border-inline-start: 3px solid var(--orange);
+  border-radius: 4px;
+  background: #fff6ed;
+}
+.payment-payee p {
+  margin: 0;
+}
+#payee {
+  color: var(--deep);
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+#payee-check {
+  margin-top: 5px;
+}
+#payee-check strong {
+  display: block;
+  color: #842e12;
+}
+.payment-proof-note {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #dddff0;
+  border-inline-start: 3px solid var(--navy);
+  border-radius: 4px;
+  background: #f5f5fc;
+}
+.payment-proof-note h3 {
+  margin: 0 0 5px;
+  color: var(--navy);
+  font: 700 1.5rem/1.1 var(--display);
+}
+.payment-proof-note p {
+  margin: 0;
+}
+.payment-proof-note strong {
+  color: var(--deep);
+}
+#proof-tip strong {
+  display: block;
 }
 .upi-launch {
   display: flex;

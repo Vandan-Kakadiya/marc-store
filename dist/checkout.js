@@ -336,6 +336,12 @@ function showUpiMethods(payment, total) {
   $('upi').textContent = payment.upi;
   $('upi-copy-status').textContent = '';
 }
+function showPaymentInstructions(retrying) {
+  $('payment-methods').hidden = retrying;
+  $('payee-check').hidden = retrying;
+  $('proof-tip').hidden = retrying;
+  $('proof-retry-tip').hidden = !retrying;
+}
 function openPayment(record) {
   order = record;
   show('payment');
@@ -344,7 +350,7 @@ function openPayment(record) {
   $('summary-total').textContent = amount;
   $('payee').textContent = record.payment.payee;
   $('pay-amount').textContent = amount;
-  $('payment-methods').hidden = !!draft.sent;
+  showPaymentInstructions(Boolean(draft.sent));
   if (!draft.sent) showUpiMethods(record.payment, record.total);
 
   const bank = record.payment.bank;
@@ -367,9 +373,6 @@ function openPayment(record) {
   $('submit-proof-label').textContent = draft.sent ? 'Retry upload' : 'Place order';
   $('upload-recovery').hidden = !draft.sent;
   $('recovery-reference').textContent = draft.sent ? draft.id : '';
-  $('proof-tip').textContent = draft.sent
-    ? 'Retry with the same UTR and screenshot. Pay only once.'
-    : 'Submit your UTR and screenshot. MARC checks the bank record before confirming payment.';
 }
 function openReceipt(entry) {
   show('receipt');
@@ -901,8 +904,7 @@ $('proof-form').onsubmit = async (e) => {
 
   draft = pending;
   proof.paidWith.disabled = true;
-  $('payment-methods').hidden = true;
-  $('proof-tip').textContent = 'Retry with the same UTR and screenshot. Pay only once.';
+  showPaymentInstructions(true);
   $('cancel-unpaid').hidden = true;
   $('submit-proof').disabled = true;
   message();

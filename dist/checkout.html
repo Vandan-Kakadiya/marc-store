@@ -20,9 +20,9 @@
       crossorigin
     />
     <link rel="modulepreload" href="market-core.js?v=14" />
-    <link rel="stylesheet" href="market.css?v=26" />
+    <link rel="stylesheet" href="market.css?v=27" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=19"></script>
+    <script type="module" src="checkout.js?v=20"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -118,7 +118,13 @@
             <div class="payment-total">
               <span>Amount to pay</span>
               <strong id="pay-amount"></strong>
-              <p>Pay to <strong id="payee"></strong></p>
+              <div class="payment-payee">
+                <p>Pay to <strong id="payee"></strong></p>
+                <p id="payee-check">
+                  <strong>Check the payee name.</strong>
+                  Pay only if your payment app shows the same name.
+                </p>
+              </div>
             </div>
             <div id="payment-methods">
               <details id="upi-app-payment" hidden>
@@ -171,10 +177,16 @@
                 </p>
               </details>
             </div>
-            <h3>After paying</h3>
-            <p id="proof-tip">
-              Submit your UTR and screenshot. MARC checks the bank record before confirming payment.
-            </p>
+            <div class="payment-proof-note">
+              <h3>After paying</h3>
+              <p id="proof-tip">
+                <strong>Submit your UTR and screenshot.</strong>
+                MARC checks the bank record before confirming payment.
+              </p>
+              <p id="proof-retry-tip" hidden>
+                Retry with the same UTR and screenshot. <strong>Pay only once.</strong>
+              </p>
+            </div>
             <form id="proof-form">
               <label id="paid-with-label">
                 Paid with
