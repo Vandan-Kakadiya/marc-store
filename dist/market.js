@@ -70,24 +70,18 @@ async function updateBag(reduce, reportError = toast) {
     return false;
   }
 }
-function customizationRibbon(rows) {
+function customizationLabel(rows) {
   const fields = new Set(rows.flatMap((row) => row.printFields ?? []));
-  if (!fields.size) return null;
+  if (!fields.size) return '';
 
-  let options = fields.has('name') ? 'Name' : 'Number';
   if (fields.size === 2) {
-    const bothOnOneSku = rows.some((row) => row.printFields?.length === 2);
-    options = bothOnOneSku ? 'Name & number' : 'Name or number';
+    const bothOnOneSku = rows.some(({ printFields }) =>
+      printFields?.includes('name') && printFields.includes('number')
+    );
+    return bothOnOneSku ? 'Customised name & number' : 'Customised name or number';
   }
 
-  const ribbon = node('span', 'customize-ribbon');
-  const face = node('span', 'customize-ribbon-face');
-  face.append(
-    node('span', 'customize-ribbon-label', 'Customize'),
-    node('span', '', options)
-  );
-  ribbon.append(face);
-  return ribbon;
+  return fields.has('name') ? 'Customised name' : 'Customised number';
 }
 function buildCards() {
   cardsFor = catalog;
@@ -102,7 +96,11 @@ function buildCards() {
         'p',
         'card-meta',
         row.colour + ' · ' + rows.map((s) => s.size).join(', ')
-      ),
+      )
+    );
+    const label = customizationLabel(rows);
+    if (label) card.append(node('span', 'card-customization', label));
+    card.append(
       node(
         'p',
         'price',
@@ -110,8 +108,6 @@ function buildCards() {
           money(Math.min(...prices))
       )
     );
-    const ribbon = customizationRibbon(rows);
-    if (ribbon) card.append(ribbon);
     // One line per option, so a search never matches across two options.
     const text = rows
       .map((s) => [s.name, s.colour, s.size, s.sku].join(' '))
