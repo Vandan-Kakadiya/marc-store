@@ -49,7 +49,7 @@
       ]
     },
     {
-      "source": "/(market|market-core|checkout|order-progress)\\.([a-f0-9]+)\\.(js|css)",
+      "source": "/(market|market-core|checkout|upi-apps|order-progress)\\.([a-f0-9]+)\\.(js|css)",
       "headers": [
         {
           "key": "Cache-Control",

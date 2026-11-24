@@ -10,7 +10,7 @@ const cardSizes = '(max-width: 680px) 36vw, (max-width: 950px) 24vw, 260px';
 
 // Files with a content hash in their name can be cached for a year. A file is
 // listed after every file it imports.
-const hashedAssets = ['market-core.js', 'market.js', 'checkout.js', 'market.css', 'order-progress.css'];
+const hashedAssets = ['market-core.js', 'market.js', 'upi-apps.js', 'checkout.js', 'market.css', 'order-progress.css'];
 const pages = ['index.html', 'checkout.html', 'privacy.html', 'marc-rules.html'];
 
 export function photoPath(src) {

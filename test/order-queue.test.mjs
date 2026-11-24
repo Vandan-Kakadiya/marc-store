@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { createCheckout } from '../server/checkout.js';
 import { seal, secret } from '../server/common.js';
@@ -14,6 +14,7 @@ function privateQueue() {
     loseCompletionReply: false, checks: 0
   };
   const status = (job) => job ? job.result ?? { pending: true, number: job.number } : null;
+  const summaryHash = ({ total, lines }) => createHash('sha256').update(JSON.stringify([total, lines])).digest('hex');
   function requireWrites() {
     if (state.unavailable || state.writesUnavailable) throw Error('Database writes unavailable');
   }
@@ -23,16 +24,17 @@ function privateQueue() {
       requireWrites();
       const job = jobs.get(key);
       if (job) return job.fingerprint === fingerprint ? status(job) : { ok: false, code: 'retry_different' };
-      jobs.set(key, { id, fingerprint, metadata, proof });
+      jobs.set(key, { id, fingerprint, metadata, proof, summaryHash: summaryHash(JSON.parse(metadata)) });
       if (state.loseWriteReply) {
         state.loseWriteReply = false;
         throw Error('Database committed the order but the response was lost');
       }
       return { pending: true };
     },
-    async status(key) {
+    async status(key, quote) {
       if (state.unavailable) throw Error('Database unavailable');
-      return status(jobs.get(key));
+      const job = jobs.get(key);
+      return job ? { ...status(job), summaryMatches: job.summaryHash === summaryHash(quote) } : null;
     },
     async saveNumber(key, number) {
       const job = jobs.get(key);
@@ -49,7 +51,7 @@ function privateQueue() {
       requireWrites();
       const job = jobs.get(key);
       if (!job || job.id !== id || job.fingerprint !== fingerprint) return false;
-      jobs.set(key, { id, fingerprint, result: job.result || result });
+      jobs.set(key, { id, fingerprint, summaryHash: job.summaryHash, result: job.result || result });
       if (state.loseCompletionReply) {
         state.loseCompletionReply = false;
         throw Error('Database committed the receipt but the response was lost');
@@ -462,4 +464,29 @@ test('the same receipt is recovered from Sheets after switching queues', async (
   const unrelated = await f.status(differentQuote, impersonator);
   assert.equal(unrelated.status, 200);
   assert.equal((await unrelated.json()).status, 'not_submitted');
+});
+
+test('a recovered receipt always uses the saved amount, including earlier Sheet deployments', async () => {
+  const f = setup();
+  const original = await f.quote();
+  const revised = await f.quote(undefined, { id: original.id, items: [{ sku: 'POLO-W-M', qty: 2 }] });
+  assert.equal((await f.place(original, 230)).status, 202);
+  await f.drain();
+  f.queue.jobs.clear();
+  const findOrder = f.script.findSavedOrder_;
+  for (const oldReceiver of [false, true]) {
+    if (oldReceiver) f.script.findSavedOrder_ = (...args) => {
+      const result = findOrder(...args);
+      const { id, number, submittedAt, status } = result.data;
+      return { ok: true, data: { id, number, submittedAt, status } };
+    };
+    const response = await f.status(revised);
+    assert.equal(response.status, 200);
+    const receipt = await response.json();
+    assert.ok(receipt.token);
+    assert.equal(receipt.total, original.total);
+    assert.deepEqual(receipt.lines, original.lines);
+    const reopened = await (await f.post('receipts', { tokens: [receipt.token] })).json();
+    assert.equal(reopened[0].total, original.total);
+  }
 });

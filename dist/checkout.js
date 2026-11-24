@@ -18,6 +18,8 @@ import {
   syncBag
 } from './market-core.js?v=14';
 
+import { checkoutQr, configureUpiPicker } from './upi-apps.js';
+
 const legacyReceiptKey = 'marc-vercel-receipts-v1';
 const path = new URL(location.href);
 const contactForm = $('contact-form');
@@ -291,45 +293,33 @@ function updateReferenceField() {
     ? 'Reference from your bank receipt'
     : '12-digit reference';
 }
-function showUpiMethods(payment, amount) {
-  const link = payment.upiLink?.startsWith('upi://pay?') ? payment.upiLink : '';
-  const android = navigator.userAgentData?.platform === 'Android' ||
-    /Android/i.test(navigator.userAgent);
-  const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  const openApps = !!link && (android || ios);
-  const androidIntent = !!link && android && /Chrome\//.test(navigator.userAgent);
-  const pay = $('pay-with-upi');
-  $('upi-app-payment').hidden = !openApps;
-  $('upi-shortcuts').hidden = !androidIntent;
-  if (openApps) {
-    pay.href = ios ? link.replace('upi://pay?', 'gpay://upi/pay?') : link;
-    pay.textContent = 'Pay ' + amount + (ios ? ' with Google Pay' : ' with a UPI app');
-  }
-  if (androidIntent) {
-    const fallback = encodeURIComponent(
-      new URL('/checkout.html#payment-qr', location.origin).href
-    );
-    const intent = link.replace('upi://', 'intent://') + '#Intent;scheme=upi;';
-    const end = 'S.browser_fallback_url=' + fallback + ';end';
-    pay.href = intent + end;
-    $('upi-gpay').href = intent + 'package=com.google.android.apps.nbu.paisa.user;' + end;
-    $('upi-phonepe').href = intent + 'package=com.phonepe.app;' + end;
-    $('upi-paytm').href = intent + 'package=net.one97.paytm;' + end;
-  }
+function showUpiMethods(payment, total) {
+  const picker = $('upi-app-payment');
+  const { mobile, validLink } = configureUpiPicker(picker, payment, total, navigator, location.origin);
   const qr = $('qr');
   const qrLink = $('qr-link');
-  const orderQr = /^data:image\/(png|gif);base64,/.test(payment.orderQr || '')
-    ? payment.orderQr
-    : '';
-  function displayQr(generated) {
-    const source = generated ? orderQr : payment.qr;
-    $('qr-help').textContent = generated
+  const { orderQr, hasUpiId, source } = checkoutQr(payment, validLink);
+  function hideUnavailableQr() {
+    qr.onerror = null;
+    qr.hidden = true;
+    qr.removeAttribute('src');
+    qrLink.hidden = true;
+    qrLink.removeAttribute('href');
+    $('qr-gallery-help').hidden = true;
+    $('qr-help').textContent = hasUpiId
+      ? 'QR unavailable. You can copy the UPI ID below and enter ' + money(total) + ' in your app.'
+      : 'The payment QR is unavailable. Check with MARC before paying.';
+  }
+  if (source) {
+    qr.hidden = false;
+    qrLink.hidden = false;
+    $('qr-gallery-help').hidden = !mobile;
+    $('qr-help').textContent = orderQr
       ? 'Scan with your phone’s UPI app. The amount and order reference are filled in for you.'
       : 'Scan with your phone’s UPI app and enter the exact order amount shown above.';
     qrLink.href = source;
-    qrLink.textContent = generated ? 'Save QR image' : 'Open QR image ↗';
-    if (generated) {
+    qrLink.textContent = orderQr ? 'Save QR image' : 'Open QR image ↗';
+    if (orderQr) {
       qrLink.download = orderQr.startsWith('data:image/png')
         ? 'marc-payment-qr.png'
         : 'marc-payment-qr.gif';
@@ -338,16 +328,11 @@ function showUpiMethods(payment, amount) {
       qrLink.removeAttribute('download');
       qrLink.target = '_blank';
     }
+    qr.onerror = hideUnavailableQr;
     qr.src = source;
-  }
-  qr.onerror = () => {
-    if (qr.getAttribute('src') === orderQr) displayQr(false);
-    else message('The payment QR did not load. Check with MARC before paying.', true);
-  };
-  displayQr(!!orderQr);
-  $('payment-qr').open = !openApps || location.hash === '#payment-qr';
-  $('qr-gallery-help').hidden = !(android || ios);
-  $('upi-id').hidden = !/^[a-z0-9][a-z0-9._-]*@[a-z][a-z0-9]+$/i.test(payment.upi);
+  } else hideUnavailableQr();
+  $('payment-qr').open = picker.hidden || location.hash === '#payment-qr';
+  $('upi-id').hidden = !hasUpiId;
   $('upi').textContent = payment.upi;
   $('upi-copy-status').textContent = '';
 }
@@ -360,7 +345,7 @@ function openPayment(record) {
   $('payee').textContent = record.payment.payee;
   $('pay-amount').textContent = amount;
   $('payment-methods').hidden = !!draft.sent;
-  if (!draft.sent) showUpiMethods(record.payment, amount);
+  if (!draft.sent) showUpiMethods(record.payment, record.total);
 
   const bank = record.payment.bank;
   const bankDetails = $('bank-details');
@@ -395,7 +380,7 @@ function openReceipt(entry) {
       .map((item) => node('p', 'line-meta', item));
     $('summary-lines').replaceChildren(...rows);
   }
-  $('summary-total').textContent = money(entry.total);
+  $('summary-total').textContent = Number.isSafeInteger(entry.total) ? money(entry.total) : '—';
   $('receipt-status').textContent = 'Payment status · ' + (entry.paymentStatus || 'Under review');
   $('order-number').textContent = entry.number || entry.id;
   $('back-to-orders').hidden = !ordersMode;
@@ -420,7 +405,7 @@ async function finishSubmission(saved, turn) {
     if (!ordersMode) openReceipt(saved);
   }
   try {
-    await finishBag(completed);
+    if (saved.lines?.length) await finishBag({ ...completed, items: saved.lines });
   } catch {
     if (turn === loadCount)
       message('Your order was saved. Your browser could not update the bag.');
@@ -814,6 +799,15 @@ $('cancel-unpaid').onclick = () => {
   }
 };
 
+$('upi-shortcuts').addEventListener('click', (event) => {
+  const option = event.target.closest('a[href]');
+  if (!option) return;
+  $('upi-app-payment').open = false;
+  if (option.id === 'upi-scan') {
+    $('payment-qr').open = true;
+    $('payment-qr').querySelector('summary').focus();
+  }
+});
 window.addEventListener('hashchange', () => {
   if (location.hash === '#payment-qr') $('payment-qr').open = true;
 });

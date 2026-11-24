@@ -59,8 +59,8 @@ test('PostgreSQL admits 50 simultaneous full-size proofs, then releases them aft
     id: randomUUID(), version: f.state.deployed.version, items: [{ sku: 'POLO-W-M', qty: 1 }],
     contact: { name: 'Test Buyer', phone: '9876543210', roll: '0260010', affiliation: 'PGPM 2026-28' }
   });
-  async function quote() {
-    const response = await buyerPost('quote', quoteFields());
+  async function quote(changes = {}) {
+    const response = await buyerPost('quote', { ...quoteFields(), ...changes });
     assert.equal(response.status, 200);
     return response.json();
   }
@@ -87,6 +87,10 @@ test('PostgreSQL admits 50 simultaneous full-size proofs, then releases them aft
     return entry;
   }));
   assert.equal(new Set(pending.map((entry) => entry.number)).size, 50);
+  // Two tabs can quote different sizes at the same price. The stored goods decide the receipt.
+  const revised = await quote({ id: orders[0].id, items: [{ sku: 'POLO-W-L', qty: 1 }] });
+  assert.equal(revised.total, orders[0].total);
+  assert.equal((await buyerPost('status', { quote: revised.token })).status, 409);
   t.diagnostic('50 parallel 4 MiB requests accepted in ' + Math.round(performance.now() - started) + ' ms locally.');
   assert.equal(await queue.availableBytes(), (384 - 200) * 1024 * 1024);
 
@@ -133,6 +137,11 @@ test('PostgreSQL admits 50 simultaneous full-size proofs, then releases them aft
   const receipt = await (await buyerPost('status', { quote: orders[0].token })).json();
   assert.equal(receipt.number, pending[0].number);
   assert.equal(receipt.status, 'under_review');
+  assert.equal((await buyerPost('status', { quote: revised.token })).status, 409);
+  await pool.query("UPDATE marc.order_queue SET result = result - 'summaryHash' WHERE order_id = $1", [orders[0].id]);
+  const archived = await buyerPost('status', { quote: revised.token });
+  assert.equal(archived.status, 200);
+  assert.deepEqual((await archived.json()).lines, orders[0].lines);
   const secondSession = await accounts.write('session', owner, { id: secret() });
   assert.equal(await accounts.remove('session', owner, session.version), false);
   assert.deepEqual(await accounts.read('session', owner), secondSession);

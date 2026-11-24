@@ -501,16 +501,30 @@ function nextOrderNumber_(tab, columns, contact) {
   var count = 0, highest = 0;
   var rowCount = tab.getLastRow() - 1;
   if (!rowCount) return prefix + '1';
-  var rows = tab.getRange(2, 1, rowCount, columns.number).getValues();
-  rows.forEach(function (row) {
+  // Keep a single Sheet call for small sales. For larger sales read only the
+  // columns needed for numbering, leaving names, emails and item text in Sheets.
+  var small = rowCount <= 100 ? tab.getRange(2, 1, rowCount, columns.number).getValues() : null;
+  function values(column, width) {
+    return small ? small.map(function (row) { return row.slice(column - 1, column - 1 + width); })
+      : tab.getRange(2, column, rowCount, width).getValues();
+  }
+  var ids = values(1, 1), groups = values(7, 2), numbers = values(columns.number, 1);
+  var matchingRows = [];
+  ids.forEach(function (row, index) {
     if (!ORDER_ID_PATTERN.test(row[0])) return;
-    if (savedOrder_(row) && orderGroup_(row[6], row[7]) === group) count++;
-    var number = row[columns.number - 1];
+    if (orderGroup_(groups[index][0], groups[index][1]) === group) matchingRows.push(index);
+    var number = numbers[index][0];
     if (typeof number === 'string' && number.indexOf(prefix) === 0) {
       var sequence = Number(number.slice(prefix.length));
       if (Number.isSafeInteger(sequence)) highest = Math.max(highest, sequence);
     }
   });
+  // Older rows can predate MARC order numbers. Count completed rows only
+  // when their count could actually raise the next number.
+  if (matchingRows.length > highest) {
+    var dates = values(2, 1), links = values(12, 1);
+    matchingRows.forEach(function (index) { if (dates[index][0] && links[index][0]) count++; });
+  }
   return prefix + (Math.max(count, highest) + 1);
 }
 function receiptRows_(tab, columns, key, email, proven) {
@@ -560,10 +574,12 @@ function findSavedOrder_(p, identity) {
   var row = tab.getRange(rowNumber, 1, 1, width).getValues()[0];
   if (!savedOrder_(row)) return { ok: true, data: null };
   var snapshot = columns && row[columns.snapshot - 1];
-  var owner;
+  var owner, lines = [];
   if (snapshot) {
     try {
-      owner = JSON.parse(snapshot).key === buyerKey_(identity.buyer);
+      var saved = JSON.parse(snapshot);
+      owner = saved.key === buyerKey_(identity.buyer);
+      if (Array.isArray(saved.lines)) lines = saved.lines;
     } catch (invalidSnapshot) {
       return { ok: true, data: null };
     }
@@ -572,7 +588,11 @@ function findSavedOrder_(p, identity) {
     owner = email && String(row[4]).trim().toLowerCase() === email;
   }
   if (!owner) return { ok: true, data: null };
-  return savedReceipt_(row[0], row, columns && row[columns.number - 1]);
+  var receipt = savedReceipt_(row[0], row, columns && row[columns.number - 1]);
+  receipt.data.total = Math.round(Number(row[9]) * 100);
+  receipt.data.lines = lines;
+  if (!lines.length) receipt.data.items = String(row[8] || '');
+  return receipt;
 }
 function listOrders_(p, identity) {
   if (!identity || typeof identity.buyer !== 'string' || !identity.buyer)

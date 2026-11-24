@@ -299,7 +299,7 @@ async function submit(req, env, buyer, fetcher, queue, queueHealth) {
   return orderResult(result, quote, env, buyer);
 }
 
-function orderResult(result, quote, env, buyer) {
+function orderResult(result, quote, env, buyer, summary = quote) {
   if (!result.ok) {
     if (result.code === 'reference_in_use')
       fail(
@@ -337,15 +337,16 @@ function orderResult(result, quote, env, buyer) {
   const receipt = {
     id: quote.id,
     number: orderNumberPattern.test(saved.number || '') ? saved.number : quote.id,
-    total: quote.total,
-    lines: quote.lines,
+    total: summary.total,
+    lines: summary.lines,
+    ...(!summary.lines.length && summary.items ? { items: summary.items } : {}),
     submittedAt: saved.submittedAt,
     status: saved.status
   };
   return json({
     ...receipt,
     token: seal(
-      { ...receipt, buyer: buyer.sub, expires: Date.now() + 365 * 86400000 },
+      { ...receipt, version: 2, buyer: buyer.sub, expires: Date.now() + 365 * 86400000 },
       receiptPurpose,
       env.MARC_SESSION_KEY
     )
@@ -360,17 +361,14 @@ function ownReceipts(tokens, env, buyer) {
     const receipt =
       typeof token === 'string' &&
       unseal(token, receiptPurpose, env.MARC_SESSION_KEY, quoteMax);
-    if (receipt && receipt.buyer === buyer.sub) {
-      const { id, number, total, lines, submittedAt, status } = receipt;
-      visible.push({ id, number: number || id, total, lines, submittedAt, status });
-    }
+    if (receipt && receipt.buyer === buyer.sub) visible.push(receipt);
   }
   return visible;
 }
 
-async function orderHistory(body, env, buyer, fetcher) {
+async function orderHistory(receipts, env, buyer, fetcher) {
   if (!storageReady(env)) fail(503, 'MARC is setting up order storage.');
-  const orderIds = ownReceipts(body.tokens ?? [], env, buyer).map((r) => r.id);
+  const orderIds = receipts.map((r) => r.id);
   let result;
   try {
     result = await callScript(
@@ -385,13 +383,59 @@ async function orderHistory(body, env, buyer, fetcher) {
   }
   if (!result.ok || !Array.isArray(result.data))
     fail(503, 'Your orders could not be loaded. Try again.');
-  return json(result.data);
+  return result.data;
+}
+
+async function displayReceipts(tokens, env, buyer, fetcher) {
+  const receipts = ownReceipts(tokens, env, buyer);
+  const legacy = receipts.filter((entry) => entry.version !== 2);
+  const recorded = legacy.length ? await orderHistory(legacy, env, buyer, fetcher) : [];
+  return json(receipts.map((receipt) => {
+    const { id, number, submittedAt, status } = receipt;
+    const identity = { id, number: number || id, submittedAt, status };
+    if (receipt.version === 2) return { ...identity, total: receipt.total, lines: receipt.lines,
+      ...(receipt.items ? { items: receipt.items } : {}) };
+    const saved = recorded.find((row) => row.id === id && Date.parse(row.submittedAt) === Date.parse(submittedAt));
+    // A pre-update receipt may belong to an archived Sheet. Keep its reference
+    // available even if the current Sheet cannot supply the original line items.
+    return saved || { ...identity, lines: [], total: null, paymentStatus: 'Check with MARC',
+      items: 'Contact MARC with this order ID for the original order details.' };
+  }));
+}
+
+async function sheetStatus(quote, env, buyer, fetcher, knownSaved) {
+  const identity = { id: quote.id, collection: quote.collection, buyer: buyer.sub,
+    email: buyer.googleEmail ? buyer.email : '' };
+  const saved = await callScript(env, 'findSavedOrder', identity, fetcher, 8000);
+  if (!saved.ok || (!saved.data && knownSaved))
+    fail(503, 'Your saved order could not be loaded. Check My orders.');
+  if (!saved.data) return json({ id: quote.id, status: 'not_submitted' });
+  let summary = saved.data;
+  // Older Apps Script deployments return only an ID and date from findSavedOrder.
+  // Their account history still contains the actual order amount and items.
+  if (!Array.isArray(summary.lines)) {
+    const history = await callScript(env, 'listOrders', {
+      buyer: buyer.sub, email: identity.email, orderIds: []
+    }, fetcher, 10000);
+    summary = history.ok && Array.isArray(history.data) && history.data.find(
+      (row) => row.id === quote.id && Date.parse(row.submittedAt) === Date.parse(saved.data.submittedAt)
+    );
+  }
+  if (!summary || !Number.isSafeInteger(summary.total) || summary.total <= 0 || !Array.isArray(summary.lines))
+    fail(503, 'Your saved order details could not be confirmed. Check My orders.');
+  return orderResult(saved, quote, env, buyer, summary);
 }
 
 export function createCheckout({
   env, fetcher = fetch, queue = createOrderQueue(env), accounts = createAccountStore(env, fetcher)
 }) {
   const queueHealth = queue ? queueReadiness(queue) : null;
+  let catalogueInFlight;
+  function currentCatalogue(origin) {
+    // Share only overlapping reads. The next request after completion fetches afresh.
+    catalogueInFlight ??= getCatalogue(origin, fetcher).finally(() => { catalogueInFlight = undefined; });
+    return catalogueInFlight;
+  }
   return async (req) => {
     try {
       const url = new URL(req.url),
@@ -437,8 +481,9 @@ export function createCheckout({
             fail(503, 'MARC is setting up order storage.');
           if (typeof body.id !== 'string' || !orderPattern.test(body.id))
             fail(400, 'Start checkout again from the store.');
-          const catalogue = await getCatalogue(origin, fetcher);
-          if (!catalogue.ready || env.MARC_PAYMENTS_PAUSED === '1')
+          if (env.MARC_PAYMENTS_PAUSED === '1') fail(409, 'Ordering is currently paused.');
+          const catalogue = await currentCatalogue(origin);
+          if (!catalogue.ready)
             fail(409, 'Ordering is currently paused.');
           if (queueEnabled(env) && !catalogue.collection)
             fail(503, 'MARC is preparing the order sheet for this collection.');
@@ -476,27 +521,18 @@ export function createCheckout({
           return json(quoteView(openQuote(body.quote, env, buyer)));
         case 'status': {
           const quote = openQuote(body.quote, env, buyer);
-          if (!queue) {
-            if (quote.queued) fail(503, 'Order status is temporarily unavailable.');
-            return json({ id: quote.id, status: 'not_submitted' });
-          }
-          const key = queueKey(env, quote);
-          let result = await queue.status(key);
-          if (!result) {
-            // Check the original Sheet for receipts saved before the database cutover.
-            const saved = await callScript(env, 'findSavedOrder', {
-              id: quote.id, collection: quote.collection,
-              buyer: buyer.sub, email: buyer.googleEmail ? buyer.email : ''
-            }, fetcher, 8000);
-            if (!saved.ok) fail(503, 'Order status is temporarily unavailable.');
-            if (!saved.data) return json({ id: quote.id, status: 'not_submitted' });
-            result = saved;
-          }
+          if (!queue && quote.queued) fail(503, 'Order status is temporarily unavailable.');
+          const result = queue && await queue.status(queueKey(env, quote), quote);
+          if (result?.summaryMatches === false)
+            fail(409, 'Another version of this checkout was submitted. Open My orders for the recorded details.');
+          if (!result || (result.ok && result.summaryMatches !== true))
+            return await sheetStatus(quote, env, buyer, fetcher, Boolean(result?.ok));
+          if (result.pending && result.summaryMatches !== true)
+            fail(503, 'Order details could not be confirmed. Check My orders.');
           if (result.pending) return queuedResponse(quote, result.number);
           if (!result.ok) return json({
             id: quote.id,
-            total: quote.total,
-            lines: quote.lines,
+            ...(result.summaryMatches === true ? { total: quote.total, lines: quote.lines } : { lines: [] }),
             status: 'needs_attention',
             message: result.code === 'reference_in_use'
               ? 'This transaction ID is already recorded. Check My orders or contact MARC with this reference.'
@@ -505,9 +541,9 @@ export function createCheckout({
           return orderResult(result, quote, env, buyer);
         }
         case 'receipts':
-          return json(ownReceipts(body.tokens, env, buyer));
+          return await displayReceipts(body.tokens, env, buyer, fetcher);
         case 'history':
-          return await orderHistory(body, env, buyer, fetcher);
+          return json(await orderHistory(ownReceipts(body.tokens ?? [], env, buyer), env, buyer, fetcher));
         default:
           fail(404, 'Unknown checkout request.');
       }

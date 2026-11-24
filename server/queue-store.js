@@ -1,6 +1,9 @@
 import { database } from './database.js';
 
-const statusOf = (row) => row ? row.result ?? { pending: true, number: row.number } : null;
+// jsonb gives the same canonical representation when object keys arrive in a
+// different order. Keep only this check after the worker archives the proof.
+const storedSummary = "jsonb_build_array(metadata::jsonb -> 'total', metadata::jsonb -> 'lines')";
+const summaryHash = (sql) => `encode(sha256(convert_to((${sql})::text, 'UTF8')), 'hex')`;
 
 export function createOrderQueue(env, pool = database(env)) {
   if (!pool) return null;
@@ -14,11 +17,16 @@ export function createOrderQueue(env, pool = database(env)) {
       if (row.disposition === 'full') return { ok: false, code: 'queue_full' };
       return row.receipt ?? { pending: true, number: row.number };
     },
-    async status(key) {
+    async status(key, quote) {
       const { rows: [row] } = await pool.query(
-        'SELECT order_number AS number, result FROM marc.order_queue WHERE queue_key = $1', [key]
+        `SELECT order_number AS number, result,
+            CASE WHEN completed_at IS NULL THEN ${storedSummary} = $2::jsonb
+                 ELSE result ->> 'summaryHash' = ${summaryHash('$2::jsonb')} END AS matches
+          FROM marc.order_queue WHERE queue_key = $1`,
+        [key, JSON.stringify([quote.total, quote.lines])]
       );
-      return statusOf(row);
+      if (!row) return null;
+      return { ...(row.result ?? { pending: true, number: row.number }), summaryMatches: row.matches };
     },
     async saveNumber(key, number) {
       await pool.query(`UPDATE marc.order_queue SET order_number = $2
@@ -40,7 +48,8 @@ export function createOrderQueue(env, pool = database(env)) {
     async complete(key, id, fingerprint, result) {
       const args = [key, id, fingerprint];
       const changed = await pool.query(`UPDATE marc.order_queue
-        SET result = $4, completed_at = now(), metadata = NULL, proof = NULL
+        SET result = $4::jsonb || jsonb_build_object('summaryHash', ${summaryHash(storedSummary)}),
+            completed_at = now(), metadata = NULL, proof = NULL
         WHERE queue_key = $1 AND order_id = $2 AND fingerprint = $3 AND completed_at IS NULL`,
         [...args, result]);
       if (changed.rowCount) return true;

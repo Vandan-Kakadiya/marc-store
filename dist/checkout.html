@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="theme-color" content="#292e6b" />
-    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="referrer" content="no-referrer" />
     <title>Checkout | MARC Store</title>
     <script>
       if (new URLSearchParams(location.search).get('orders') === '1') {
@@ -22,7 +22,7 @@
     <link rel="modulepreload" href="market-core.js?v=14" />
     <link rel="stylesheet" href="market.css?v=26" />
     <link rel="stylesheet" href="order-progress.css?v=3" />
-    <script type="module" src="checkout.js?v=18"></script>
+    <script type="module" src="checkout.js?v=19"></script>
   </head>
   <body class="checkout">
     <header class="mast">
@@ -121,15 +121,17 @@
               <p>Pay to <strong id="payee"></strong></p>
             </div>
             <div id="payment-methods">
-              <div id="upi-app-payment" hidden>
-                <a class="action navy upi-launch" id="pay-with-upi">Pay with a UPI app</a>
-                <div class="upi-shortcuts" id="upi-shortcuts" hidden role="group" aria-label="Open a specific UPI app">
-                  <a id="upi-gpay">GPay</a>
+              <details id="upi-app-payment" hidden>
+                <summary class="action navy upi-launch" id="pay-with-upi">Choose a UPI app</summary>
+                <div class="upi-shortcuts" id="upi-shortcuts" role="group" aria-label="UPI app options">
+                  <a id="upi-gpay">Google Pay</a>
                   <a id="upi-phonepe">PhonePe</a>
                   <a id="upi-paytm">Paytm</a>
+                  <a id="upi-default" hidden>Phone’s default UPI app</a>
+                  <a id="upi-scan" href="#payment-qr">Scan QR instead</a>
                 </div>
-                <p class="qr-help">Check the recipient and amount in the app. Return here after paying.</p>
-              </div>
+                <p class="qr-help">Choose an app installed on your phone. If it doesn’t open, you can scan the QR code.</p>
+              </details>
               <details class="payment-qr" id="payment-qr" open>
                 <summary>Scan a UPI QR code</summary>
                 <div class="pay-block">

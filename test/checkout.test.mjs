@@ -93,6 +93,78 @@ const setup = () => {
   };
   return { ...store, login, call, json, post, quoteFields, place, png };
 };
+
+test('overlapping quotes share a catalogue read and the next checkout sees a newly paused catalogue', async () => {
+  const f = setup();
+  const cookie = await f.login();
+  const origin = f.env.MARC_SITE_URL;
+  let reads = 0;
+  const started = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const checkout = createCheckout({ env: f.env, fetcher: async (url, options) => {
+    if (url === origin + '/catalogue.json') {
+      reads++;
+      started.resolve();
+      await release.promise;
+    }
+    return f.fetcher(url, options);
+  } });
+  const send = () => checkout(new Request(origin + '/api/checkout?action=quote', {
+    method: 'POST', headers: { cookie, origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ ...f.quoteFields, id: randomUUID() })
+  }));
+  const batch = Promise.all(Array.from({ length: 50 }, send));
+  await started.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  release.resolve();
+  assert.ok((await batch).every((response) => response.status === 200));
+  assert.equal(reads, 1);
+  f.state.deployed = { ...f.state.deployed, ready: false };
+  assert.equal((await send()).status, 409);
+  assert.equal(reads, 2);
+});
+
+test('older local receipts recover their recorded contents and preserve the reference when archived', async () => {
+  const f = setup();
+  const cookie = await f.login();
+  const quote = await f.json(await f.post(cookie, 'quote', f.quoteFields));
+  const submitted = await f.json(await f.place(cookie, quote.token, '000001239001'));
+  const previous = unseal(submitted.token, 'order receipt', f.env.MARC_SESSION_KEY);
+  delete previous.version;
+  const oldToken = seal({ ...previous, total: null, lines: [] }, 'order receipt', f.env.MARC_SESSION_KEY);
+  const view = async () => (await f.json(await f.post(cookie, 'receipts', { tokens: [oldToken] })))[0];
+  const recovered = await view();
+  assert.equal(recovered.total, quote.total);
+  assert.deepEqual(recovered.lines, quote.lines);
+  f.orders.rows.splice(1);
+  const archived = await view();
+  assert.equal(archived.number, submitted.number);
+  assert.equal(archived.total, null);
+  assert.deepEqual(archived.lines, []);
+});
+
+test('large season Sheets count older unnumbered rows and preserve already reserved numbers', () => {
+  const f = googleFixture();
+  f.script.checkOrderStorage();
+  const columns = f.script.orderColumns_(f.orders);
+  const row = (group, roll, saved, number = '') => {
+    const cells = Array(columns.number).fill('');
+    cells[0] = randomUUID();
+    cells[6] = group;
+    cells[7] = roll;
+    cells[columns.number - 1] = number;
+    if (saved) { cells[1] = '2026-01-01'; cells[11] = 'private proof'; }
+    return cells;
+  };
+  for (let i = 0; i < 110; i++) f.orders.rows.push(row('Staff', '', true));
+  f.orders.rows.push(row('Staff', '', false), row('Other', '', true), row('Staff', '0260010', true));
+  const next = (affiliation, roll = '') => f.script.nextOrderNumber_(f.orders, columns, { affiliation, roll });
+  assert.equal(next('Staff'), 'MARC_STAFF_111');
+  assert.equal(next('Other'), 'MARC_OTHER_2');
+  assert.equal(next('Student', '0260010'), 'MARC_0260010_2');
+  f.orders.rows.push(row('Staff', '', false, 'MARC_STAFF_127'));
+  assert.equal(next('Staff'), 'MARC_STAFF_128');
+});
 test('checkout quotes prices from the published catalogue without saving an order', async () => {
   const f = setup(),
     { state, login, call, json, post, quoteFields } = f;
