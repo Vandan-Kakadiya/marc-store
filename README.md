@@ -2,35 +2,31 @@
 
 This update uses the latest navy-and-orange MARC design. Use your existing project and address, **marc-store-iimt.vercel.app**. Customers shop, provide their details, enter the UPI reference and attach their screenshot on the MARC website. Google sign-in returns them to checkout.
 
-With the launch queue enabled, **Place order** stores the proof in private Vercel storage and reserves the **MARC Order ID** in the collection's order Sheet. Checkout displays **Order submitted successfully** and the ID. The Apps Script worker saves the screenshot to the restricted Drive folder and completes the row. Checkout then displays **Order received successfully** with the same ID.
+Checkout checks PostgreSQL capacity before displaying new payment instructions. **Place order** saves the proof in the database queue and reserves the **MARC Order ID** in the collection's Sheet. Checkout displays **Order submitted successfully** with the ID. The Apps Script worker saves the proof to restricted Google Drive and completes the Sheet row. The database clears its temporary proof in the same update that records the result. Checkout then displays **Order received successfully** with the same ID.
 
-## Update your live MARC store
+## Update an existing MARC store
 
-1. Replace **Code.gs** in your existing Apps Script project with **apps-script/Code.gs** from the update. Save. Select **Deploy → Manage deployments → Edit → New version → Deploy** for the existing web app. Run **checkOrderStorage** and confirm **Order storage is ready**.
-2. Upload the contents of `1-upload-to-github` to the repository root for the branch Vercel uses for Production. Preserve the folder paths. In Vercel, wait for the matching Production deployment to show **Ready**.
-3. Sign in once after updating. Google sign-in now lasts up to one hour and the latest sign-in replaces the previous one for the same account.
+Follow **START-HERE.md** in the update for the switchover. It covers the old queue, database setup, GitHub upload, the existing Apps Script deployment, and the read/write test before reopening sales.
 
-## Set up the launch queue for the first time
+## Set up the order queue for the first time
 
-1. Start with the existing Form, Sheet and screenshot folder configured in Apps Script. In the existing project, replace `Code.gs` and `appsscript.json` with the two files from `apps-script/`. To show the manifest, open **Project Settings → Show appsscript.json manifest file in editor**. If you use a standard Google Cloud project, enable **Google Drive API** in that Cloud project. [Drive API setup](https://developers.google.com/apps-script/guides/services/advanced)
-2. Run **checkOrderStorage**. The log should show **Order storage is ready**. Select **Deploy → Manage deployments → Edit → New version → Deploy** on the existing web app. Keep the same `/exec` URL and the same secrets.
-3. In Vercel, open **Storage → Create Database → Blob**. Choose **Private** and connect it to your existing MARC project for **Production**. Confirm that `BLOB_READ_WRITE_TOKEN` appears in the project's environment variables. [Vercel Blob setup](https://vercel.com/docs/vercel-blob/private-storage)
-4. Upload the files inside `1-upload-to-github/` to the matching paths in the existing repository. Wait for the new Production deployment in Vercel. `MARC_ORDER_QUEUE_ENABLED` stays off during this deployment.
-5. In the Apps Script editor, run **installOrderQueue** and approve permissions. Confirm **Order queue worker is installed** in the execution log and **processOrderQueue** in **Triggers**. This checks that the script owner can reach the private storage from Apps Script.
-6. In **Vercel → Settings → Environment Variables**, set `MARC_ORDER_QUEUE_ENABLED` to `1` for **Production**, then redeploy that release. Place one authorised test order before sharing the launch link. Look for **Order submitted successfully** with the MARC ID, then **Order received successfully** with that same ID, one completed Sheet row and one private Drive screenshot. The **Paid with** and **Payment screenshot** columns should be present.
-
-Keep **Accepting responses** off while preparing a new collection. Activate it for the test order and publish the catalogue. The build log shows how many products are available.
+1. Create a Neon PostgreSQL project. Open its **SQL Editor** and run all of `database/schema.sql`. Use the same database and branch in the connection string.
+2. In your existing Vercel project, set the pooled Neon connection string as `DATABASE_URL` for **Production**. Keep that connection string in the server settings. Set `MARC_PAYMENTS_PAUSED` to `1` during the switchover.
+3. In your existing Apps Script project, replace `Code.gs` with `apps-script/Code.gs`. Keep the current Form, Sheet, Drive folder and Script Properties. Deploy a **New version** of the same web app.
+4. Upload the files inside `1-upload-to-github` to their matching paths in the existing GitHub repository. Keep `package.json` and `package-lock.json` at the top level. Wait for the Vercel Production deployment to show **Ready**.
+5. Run **installOrderQueue** in Apps Script. Look for **Order queue worker is installed**. Then run **processOrderQueue** and check the execution log.
+6. Set `MARC_PAYMENTS_PAUSED` to `0` in Vercel and redeploy. Enable ordering in the Form and publish the catalogue as usual. Verify that one authorised order shows the same ID at both checkout stages and is recorded in Sheets and Drive.
 
 ## During and after a launch
 
 - Checkout updates automatically. When an existing checkout is open, **My orders** can also show its submitted stage. Once Google completes the save, the same account can view the receipt on any device. Accepted queue jobs continue processing after a buyer signs out. **Under review** still needs payment reconciliation.
 - From **Bag**, choose **Sign in to sync your bag**. Items and quantities follow the signed-in account, including when the buyer switches devices. Guest items merge into the account bag on sign-in using the larger quantity when the SKU is already present. The latest sign-in ends older sessions at their next request. Visible checkout and bag pages check about every 30 seconds.
-- The Apps Script trigger checks the queue every minute and continues from the next batch if needed. In **Apps Script → Executions**, open `processOrderQueue` to see how many jobs were saved or will retry. You can run that function manually to check immediately. In Vercel's private Blob store, check `marc/orders/v1/pending/` for waiting jobs. For payment conflicts, look up the buyer's order reference under `marc/orders/v1/review/` to find the order details and screenshot. Pending jobs are removed after a result is saved. The small queued number records expire after 8 days and saved status records expire after 30 days. Clear reconciled review files once MARC no longer needs them.
+- New submissions wake the Apps Script worker for its next minute run. The worker checks PostgreSQL once an hour while idle to recover an upload whose wake-up call was interrupted. In **Apps Script → Executions**, open `processOrderQueue` to see how many jobs were saved, flagged for review or scheduled for retry. Run the function manually for an immediate check. Payment conflicts are saved as `REVIEW_<checkout reference>_...` files in the collection's restricted Drive folder. The database clears the temporary file when Drive and Sheets are confirmed, or when the evidence has been archived for review in Drive. Completed statuses expire after 30 days. The original Sheet can still confirm a saved order. Pending proofs stay available for retries.
 - For the next collection, close the previous Form, update `FORM_ID` and `RESPONSE_SHEET_ID` to the new Form and its restricted order spreadsheet, run **checkOrderStorage**, and publish the catalogue. Each new checkout is tied to its own Sheet. A buyer already at payment can finish in the original Sheet until their quote expires, up to seven days from when it was issued. Let those quotes expire and the queue finish before treating the old Sheet as final for the SA office.
 
 ## Test the launch burst locally
 
-Run `npm ci` and `npm run test:launch` with Node.js 24. The test sends 75 simultaneous **Place order** submissions, including screenshots of 1.5 MB and 4 MB, through the queue with simulated Vercel Blob and Google services. It verifies one order and one screenshot per submission, retries after a lost reply, and correct Sheet routing. `npm test` also runs the catalogue and checkout tests. Real processing time depends on the connected services.
+Run `npm ci` and `npm run test:launch` with Node.js 24. The test sends 75 simultaneous **Place order** submissions, including screenshots of 1.5 MB and 4 MB, through the queue with a simulated queue and Google services. It verifies one order and one screenshot per submission, retries after a lost reply, and correct Sheet routing. `npm test` also runs the catalogue and checkout tests. Real processing time depends on the connected services.
 
 The receipt displays the **Order ID**. For example, `MARC_0260010_2` is the second numbered order from roll number `0260010` in this sales window, and `MARC_STAFF_12` is the twelfth numbered staff order in the window. Each roll number has its own sequence. Staff buyers share one sequence. The next sales window starts at `_1` for each group when you use a new order spreadsheet. A retry of a queued or saved order keeps the original ID. New screenshot filenames start with the roll number or buyer group, the buyer's name and the unique order reference.
 
@@ -107,6 +103,7 @@ https://marc-store-iimt.vercel.app/api/auth/callback
 | `MARC_SCRIPT_SECRET` | Exactly the same first key you set in Apps Script |
 | `MARC_SESSION_KEY` | The different second key from Step 1 |
 | `GOOGLE_CLIENT_ID` | Your OAuth web client’s Client ID |
+| `DATABASE_URL` | The pooled PostgreSQL connection string for the database where you ran `database/schema.sql`. |
 | `GOOGLE_CLIENT_SECRET` | Your OAuth web client’s Client secret |
 
 2. Under **Settings → Build and Deployment**, use your connected repository’s root folder, the one containing `vercel.json`. **Framework Preset** is **Other**. The included `vercel.json` sets the **Build Command** to `npm run build` and **Output Directory** to `dist`. It also enables the checkout API routes at the repository root. The package selects Node.js 24. [Vercel project settings](https://vercel.com/docs/project-configuration/project-settings)
@@ -160,7 +157,7 @@ The storefront loads the latest published catalogue from Vercel. The customer ca
 5. In the configured order spreadsheet, open **MARC Website Orders**. Find the same reference. Check the timestamp (stored in UTC), contact and item details, UTR, **Under review** status and the **Payment screenshot** link. Open the link using a MARC account with access to the folder. Compare the actual UPI credit to the amount and reference, then record the verified status in the Sheet.
 6. Once previous checkouts are reconciled, switch the MARC buying links to the updated checkout on Vercel. The Form’s own Responses tab counts direct Google Form submissions. Website orders go to **MARC Website Orders**.
 
-If the upload is interrupted, stay in the same checkout tab and retry **Place order** with the same UTR and screenshot. The same order can recover a completed save. **My orders** reads the saved orders for the Google account from the configured spreadsheet on any device. Sign in again when the one-hour MARC session expires.
+If the upload is interrupted, stay in the same tab. Checkout checks the status and makes one automatic retry if the queue reports that the proof is missing. Use **Check again** or **Retry upload** if needed. The UTR stays in the checkout tab. If you reload, choose the same screenshot again. If the issue persists, share your checkout reference and payment details privately with MARC through the channel that shared the store. Pay only once. **My orders** reads the saved orders for the Google account from the configured spreadsheet on any device. Sign in again when the one-hour MARC session expires.
 
 ## Remove the Google Forms response tab
 
@@ -183,3 +180,16 @@ If the upload is interrupted, stay in the same checkout tab and retry **Place or
 | Product images load slowly or fail | Use small WebP or JPEG assets in `dist/assets/`. Check the filename in the SKU matches the deployed file. |
 
 Run `npm test` from the extracted project folder to exercise checkout with simulated Google sign-in, Sheets and Drive. The browser preview and these tests use simulated orders. The first real order verifies the connection in your own Vercel and Google accounts.
+
+## Check queue status in PostgreSQL
+
+Run this in your database's SQL Editor to see the count and size of pending proofs:
+
+```sql
+SELECT count(*) AS pending_orders,
+       COALESCE(round(SUM(proof_bytes) / 1048576.0, 2), 0) AS pending_mib
+FROM marc.order_queue
+WHERE completed_at IS NULL;
+```
+
+The queue allows up to 384 MiB of pending screenshots by default. Captured proofs are removed from the queue after they are saved. A full queue pauses new payments while the worker clears the backlog. Database provider storage, compute, and transfer allowances still apply. For a local PostgreSQL integration test, point `MARC_TEST_DATABASE_URL` at a local test server and run `node --test test/postgres-queue.test.mjs`. It creates and drops a temporary test database.

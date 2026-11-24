@@ -1,8 +1,7 @@
-import { createHmac } from 'node:crypto';
-import * as blob from '@vercel/blob';
+import { createHmac, randomUUID } from 'node:crypto';
+import { database } from './database.js';
 import { callScript } from './script-client.js';
 
-const retention = { session: 1, bag: 30 };
 export const sessionSeconds = 60 * 60;
 
 export function accountKey(env, buyer) {
@@ -11,8 +10,8 @@ export function accountKey(env, buyer) {
     .digest('hex');
 }
 
-export function createAccountStore(env, fetcher = fetch, sdk = blob) {
-  if (!env.BLOB_READ_WRITE_TOKEN) {
+export function createAccountStore(env, fetcher = fetch, pool = database(env)) {
+  if (!pool) {
     async function request(action, kind, key, details) {
       const result = await callScript(env, 'accountState', { action, kind, key, ...details }, fetcher, 9000);
       if (result.ok) return result.data;
@@ -26,40 +25,34 @@ export function createAccountStore(env, fetcher = fetch, sdk = blob) {
     };
   }
 
-  const path = (kind, key) => 'marc/accounts/v1/' + kind + '/' + key + '.json';
-  const access = () => ({ token: env.BLOB_READ_WRITE_TOKEN, abortSignal: AbortSignal.timeout(8000) });
-  async function read(kind, key) {
-    const item = await sdk.get(path(kind, key), { ...access(), access: 'private', useCache: false });
-    return item ? { version: item.blob.etag, value: await new Response(item.stream).json() } : null;
-  }
+  const retention = { session: sessionSeconds, bag: 30 * 86400 };
   return {
-    read,
+    async read(kind, key) {
+      const { rows: [row] } = await pool.query(`SELECT version, value FROM marc.account_state
+        WHERE kind = $1 AND owner = $2 AND expires_at > now()`, [kind, key]);
+      return row ?? null;
+    },
     async write(kind, key, value, expected) {
-      try {
-        const item = await sdk.put(path(kind, key), JSON.stringify(value), {
-          ...access(),
-          access: 'private',
-          contentType: 'application/json',
-          addRandomSuffix: false,
-          allowOverwrite: expected !== null,
-          ...(expected ? { ifMatch: expected } : {}),
-          ttlDays: retention[kind]
-        });
-        return { version: item.etag, value };
-      } catch (error) {
-        if (error instanceof sdk.BlobPreconditionFailedError ||
-            (expected === null && await read(kind, key))) return false;
-        throw error;
-      }
+      const version = randomUUID();
+      const args = [kind, key, version, value, retention[kind]];
+      const query = typeof expected === 'string'
+        ? `UPDATE marc.account_state SET version = $3, value = $4,
+            expires_at = now() + $5 * interval '1 second'
+            WHERE kind = $1 AND owner = $2 AND version::text = $6 AND expires_at > now()`
+        : `INSERT INTO marc.account_state (kind, owner, version, value, expires_at)
+            VALUES ($1, $2, $3, $4, now() + $5 * interval '1 second')
+            ON CONFLICT (kind, owner) DO UPDATE SET
+              version = EXCLUDED.version, value = EXCLUDED.value, expires_at = EXCLUDED.expires_at
+            WHERE $6::boolean OR marc.account_state.expires_at <= now()`;
+      const stored = await pool.query(query, [...args, typeof expected === 'string' ? expected : expected === undefined]);
+      return stored.rowCount ? { version, value } : false;
     },
     async remove(kind, key, expected) {
-      try {
-        await sdk.del(path(kind, key), { ...access(), ifMatch: expected });
-        return true;
-      } catch (error) {
-        if (error instanceof sdk.BlobPreconditionFailedError) return false;
-        throw error;
-      }
+      const removed = await pool.query(
+        'DELETE FROM marc.account_state WHERE kind = $1 AND owner = $2 AND version::text = $3',
+        [kind, key, expected]
+      );
+      return !!removed.rowCount;
     }
   };
 }

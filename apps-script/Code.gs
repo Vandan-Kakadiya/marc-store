@@ -115,6 +115,8 @@ function doPost(event) {
       return output_(accountState_(props, request.data));
     if (request.action === 'listOrders')
       return output_(listOrders_(props, request.data));
+    if (request.action === 'findSavedOrder')
+      return output_(findSavedOrder_(props, request.data));
     if (request.action === 'catalogue')
       return output_({ ok: true, data: catalogue_(props) });
     if (request.action === 'productPhoto')
@@ -456,11 +458,14 @@ function existingProof_(folder, o, evidence) {
   return existing.hasNext() ? existing.next() : null;
 }
 function driveCopy_(folder, o, evidence, id) {
-  var filename = proofFilename_(o, evidence.mime);
+  return writeDriveFile_(folder, proofFilename_(o, evidence.mime), evidence.bytes,
+    evidence.mime, evidence.hash, id);
+}
+function writeDriveFile_(folder, name, bytes, mime, hash, id) {
   var alreadySaved = false;
   try {
-    Drive.Files.create({ id: id, name: filename, parents: [folder.getId()] },
-      Utilities.newBlob(evidence.bytes, evidence.mime, filename), { fields: 'id', supportsAllDrives: true });
+    Drive.Files.create({ id: id, name: name, parents: [folder.getId()] },
+      Utilities.newBlob(bytes, mime, name), { fields: 'id', supportsAllDrives: true });
   } catch (error) {
     // The upload may already have committed. Reuse the exact reserved file ID.
     alreadySaved = true;
@@ -468,10 +473,10 @@ function driveCopy_(folder, o, evidence, id) {
   var file = DriveApp.getFileById(id);
   private_(file);
   if (
-    file.getSize() !== evidence.bytes.length ||
-    (alreadySaved && digest_(file.getBlob().getBytes()) !== evidence.hash)
+    file.getSize() !== bytes.length ||
+    (alreadySaved && digest_(file.getBlob().getBytes()) !== hash)
   )
-    throw Error('Screenshot could not be confirmed.');
+    throw Error('File could not be confirmed in Drive.');
   return file.getUrl();
 }
 function orderGroup_(affiliation, roll) {
@@ -541,6 +546,33 @@ function receiptRows_(tab, columns, key, email, proven) {
       return { row: block[0] + index, values: values };
     });
   });
+}
+function findSavedOrder_(p, identity) {
+  if (!identity || !ORDER_ID_PATTERN.test(identity.id || '') ||
+      typeof identity.buyer !== 'string' || !identity.buyer)
+    return { ok: false, code: 'invalid_buyer' };
+  var route = orderProperties_(p, identity.collection);
+  var tab = orderBook_(route).getSheetByName(ORDER_TAB);
+  var rowNumber = tab && locate_(tab, 1, identity.id);
+  if (!rowNumber) return { ok: true, data: null };
+  var columns = existingOrderColumns_(tab);
+  var width = columns ? Math.max(columns.number, columns.snapshot) : HEADINGS.length;
+  var row = tab.getRange(rowNumber, 1, 1, width).getValues()[0];
+  if (!savedOrder_(row)) return { ok: true, data: null };
+  var snapshot = columns && row[columns.snapshot - 1];
+  var owner;
+  if (snapshot) {
+    try {
+      owner = JSON.parse(snapshot).key === buyerKey_(identity.buyer);
+    } catch (invalidSnapshot) {
+      return { ok: true, data: null };
+    }
+  } else {
+    var email = String(identity.email || '').trim().toLowerCase();
+    owner = email && String(row[4]).trim().toLowerCase() === email;
+  }
+  if (!owner) return { ok: true, data: null };
+  return savedReceipt_(row[0], row, columns && row[columns.number - 1]);
 }
 function listOrders_(p, identity) {
   if (!identity || typeof identity.buyer !== 'string' || !identity.buyer)
@@ -1210,6 +1242,25 @@ function queueJob_(response) {
   return { fingerprint: fingerprint, order: order, bytes: bytes.slice(end + 1) };
 }
 
+function saveReviewFile_(folder, name, bytes, mime) {
+  var existing = folder.getFilesByName(name);
+  var id = existing.hasNext()
+    ? existing.next().getId()
+    : Drive.Files.generateIds({ count: 1, space: 'drive' }).ids[0];
+  return writeDriveFile_(folder, name, bytes, mime, digest_(bytes), id);
+}
+function archivePaymentReview_(p, job, code) {
+  var route = orderProperties_(p, job.order.collection);
+  var folder = DriveApp.getFolderById(route.SCREENSHOT_FOLDER_ID);
+  private_(folder);
+  var mime = job.order.proof.mime;
+  var prefix = 'REVIEW_' + job.order.id + '_' + job.fingerprint.slice(0, 12);
+  var screenshot = saveReviewFile_(folder, prefix + '.' + FORMATS[mime], job.bytes, mime);
+  var record = JSON.stringify({ order: job.order, issue: code, screenshot: screenshot });
+  var metadata = Utilities.newBlob(record, 'application/json').getBytes();
+  saveReviewFile_(folder, prefix + '.json', metadata, 'application/json');
+}
+
 /** Check the signed worker endpoint and run one drain every minute. */
 function installOrderQueue() {
   checkOrderStorage();
@@ -1267,8 +1318,13 @@ function processOrderQueue(event) {
           var job = queueJob_(response);
           var result = saveOrder_(p, job.order, job.bytes);
           if (result.ok || result.code === 'reference_in_use' || result.code === 'retry_different') {
+            var reviewArchived = false;
+            if (!result.ok) {
+              archivePaymentReview_(p, job, result.code);
+              reviewArchived = true;
+            }
             queueRequest_(p, { action: 'finish', key: key, id: job.order.id,
-              fingerprint: job.fingerprint, result: result });
+              fingerprint: job.fingerprint, result: result, reviewArchived: reviewArchived });
             if (result.ok) saved++;
             else review++;
           } else retry++;

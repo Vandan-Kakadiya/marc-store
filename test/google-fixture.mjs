@@ -99,6 +99,7 @@ function sheet(name, rows = []) {
 export function googleFixture(site = 'https://marc-test.example') {
   const env = {
     MARC_SITE_URL: site,
+    MARC_ORDER_QUEUE_ENABLED: '0',
     MARC_SCRIPT_URL: 'https://script.google.com/macros/s/marc-test/exec',
     MARC_SCRIPT_SECRET: 'a'.repeat(64),
     MARC_SESSION_KEY: 'b'.repeat(64),

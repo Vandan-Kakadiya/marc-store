@@ -474,8 +474,16 @@ async function checkSubmission(turn) {
     if (entry.token) await finishSubmission(entry, turn);
     else if (entry.status === 'processing' || entry.status === 'needs_attention')
       showPendingOrder(entry, turn);
-    else if (entry.status === 'not_submitted' && !draft.queued) return 'not_submitted';
-    else throw Error('The order status could not be confirmed.');
+    else if (entry.status === 'not_submitted') {
+      if (!draft.queued) return 'not_submitted';
+      // During the switchover, an older accepted proof may need to be uploaded again.
+      const record = await post('resume', { quote: draft.quote });
+      if (turn !== loadCount) return 'handled';
+      draft = { ...draft, queued: false, sent: true };
+      save(sessionStorage, DRAFT, draft);
+      openPayment(record);
+      showUploadRecovery();
+    } else throw Error('The order status could not be confirmed.');
   } catch (e) {
     if (turn !== loadCount) return 'handled';
     if (e.status === 401) {
@@ -503,7 +511,6 @@ async function myOrders(turn) {
   const list = node('div');
   const current = submitted ? node('div', 'past-order') : null;
   const uploadCheckUntil = Date.now() + 65000;
-  let accepted = Boolean(active?.queued);
   let savedInHistory = false;
   let title;
 
@@ -550,7 +557,6 @@ async function myOrders(turn) {
       if (savedInHistory) return;
 
       if (entry.status === 'processing') {
-        accepted = true;
         rememberQueuedOrder(entry.number);
         const number = entry.number || draft.queuedNumber;
         const heading = queuedTitle(number);
@@ -567,7 +573,7 @@ async function myOrders(turn) {
           node('p', 'line-meta', entry.message),
           node('p', 'line-meta', 'Order reference ' + entry.id)
         );
-      } else if (entry.status === 'not_submitted' && !accepted) {
+      } else if (entry.status === 'not_submitted') {
         if (title.textContent !== 'Payment submission') {
           title.textContent = 'Payment submission';
           current.append(

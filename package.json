@@ -12,7 +12,7 @@
     "test:launch": "node --test test/order-queue.test.mjs"
   },
   "dependencies": {
-    "@vercel/blob": "2.9.0",
+    "pg": "8.23.1",
     "qrcode-generator": "2.0.4"
   }
 }

@@ -7,36 +7,61 @@ import { accountKey } from '../server/account-store.js';
 import { createQueueWorker } from '../server/order-queue.js';
 import { googleFixture } from './google-fixture.mjs';
 
-function privateStore() {
-  const blobs = new Map();
-  const state = { unavailable: false, loseWriteReply: false, failDelete: false };
-  function copyBody(body) {
-    return Buffer.isBuffer(body) ? body : Buffer.from(body);
+function privateQueue() {
+  const jobs = new Map();
+  const state = {
+    unavailable: false, writesUnavailable: false, loseWriteReply: false,
+    loseCompletionReply: false, checks: 0
+  };
+  const status = (job) => job ? job.result ?? { pending: true, number: job.number } : null;
+  function requireWrites() {
+    if (state.unavailable || state.writesUnavailable) throw Error('Database writes unavailable');
   }
   return {
-    blobs,
-    state,
-    async get(path) {
-      if (state.unavailable) throw Error('Blob temporarily unavailable');
-      const body = blobs.get(path);
-      return body ? new Response(body).body : null;
-    },
-    async has(path) { return blobs.has(path); },
-    async put(path, body) {
-      if (blobs.has(path)) throw Error('Blob already exists');
-      blobs.set(path, copyBody(body));
-      if (state.loseWriteReply && path.includes('/pending/')) {
+    jobs, state,
+    async enqueue(key, id, fingerprint, metadata, proof) {
+      requireWrites();
+      const job = jobs.get(key);
+      if (job) return job.fingerprint === fingerprint ? status(job) : { ok: false, code: 'retry_different' };
+      jobs.set(key, { id, fingerprint, metadata, proof });
+      if (state.loseWriteReply) {
         state.loseWriteReply = false;
-        throw Error('Blob upload committed but the response was lost');
+        throw Error('Database committed the order but the response was lost');
       }
+      return { pending: true };
     },
-    async remove(path) {
-      if (state.failDelete) throw Error('Could not remove pending blob');
-      blobs.delete(path);
+    async status(key) {
+      if (state.unavailable) throw Error('Database unavailable');
+      return status(jobs.get(key));
     },
-    async list(prefix) {
-      return { paths: [...blobs.keys()].filter((path) => path.startsWith(prefix)) };
-    }
+    async saveNumber(key, number) {
+      const job = jobs.get(key);
+      if (job && !job.result) job.number ||= number;
+    },
+    async list() {
+      return { jobs: [...jobs].filter(([, job]) => !job.result).map(([key]) => key) };
+    },
+    async read(key) {
+      const job = jobs.get(key);
+      return job && !job.result ? job : undefined;
+    },
+    async complete(key, id, fingerprint, result) {
+      requireWrites();
+      const job = jobs.get(key);
+      if (!job || job.id !== id || job.fingerprint !== fingerprint) return false;
+      jobs.set(key, { id, fingerprint, result: job.result || result });
+      if (state.loseCompletionReply) {
+        state.loseCompletionReply = false;
+        throw Error('Database committed the receipt but the response was lost');
+      }
+      return true;
+    },
+    async availableBytes() {
+      requireWrites();
+      state.checks++;
+      return 384 * 1024 * 1024;
+    },
+    async cleanExpired() {}
   };
 }
 
@@ -44,11 +69,10 @@ function setup() {
   const f = googleFixture();
   const { env, fetcher, script, state, props } = f;
   env.MARC_ORDER_QUEUE_ENABLED = '1';
-  env.BLOB_READ_WRITE_TOKEN = 'test-private-store';
   delete props.LEGACY_TAB;
   script.checkOrderStorage();
   state.deployed = f.catalogue();
-  const store = privateStore();
+  const queue = privateQueue();
   const sessions = new Map(), cookies = new Map();
   const accounts = {
     async read(kind, key) { return sessions.get(key) || null; },
@@ -56,8 +80,8 @@ function setup() {
       if (sessions.get(key)?.version === version) sessions.delete(key);
     }
   };
-  const checkout = createCheckout({ env, fetcher, store, accounts });
-  const worker = createQueueWorker({ env, store });
+  const checkout = createCheckout({ env, fetcher, queue, accounts });
+  const worker = createQueueWorker({ env, queue });
   function signIn(sub) {
     const sessionId = secret();
     sessions.set(accountKey(env, { sub }), { version: sessionId, value: { id: sessionId } });
@@ -114,7 +138,7 @@ function setup() {
     script.installOrderQueue();
     assert.equal(f.triggers.length, 1);
   }
-  async function drain({ testLease = false, finish = true } = {}) {
+  async function drain({ testLease = false, finish = true, event } = {}) {
     // Apps Script's UrlFetch is synchronous. Capture real route responses to
     // supply those bytes, then replay the worker's signed acknowledgements.
     const list = await work({ action: 'list' });
@@ -148,14 +172,14 @@ function setup() {
       acknowledgements.push(body);
       return { getResponseCode: () => 204 };
     };
-    script.processOrderQueue();
+    script.processOrderQueue(event);
     assert.equal(props.ORDER_QUEUE_LEASE, undefined);
     if (testLease) assert.ok(leaseChecked);
     if (!finish) return acknowledgements;
     for (const ack of acknowledgements) assert.equal((await workerPost(ack)).status, 204);
     return acknowledgements;
   }
-  return { ...f, store, quote, fields, place, buyer, signIn, post, status, work, envelope, workerPost, install, drain, png };
+  return { ...f, queue, quote, fields, place, buyer, signIn, post, status, work, envelope, workerPost, install, drain, png };
 }
 
 test('75 simultaneous Place order requests finish once each with one Apps Script worker', { timeout: 45000 }, async () => {
@@ -189,7 +213,7 @@ test('75 simultaneous Place order requests finish once each with one Apps Script
   assert.equal(f.orders.rows.length - 1, count);
   assert.equal(new Set(f.orders.rows.slice(1).map((row) => row[11])).size, count);
   assert.equal(new Set(f.orders.rows.slice(1).map((row) => row[10])).size, count);
-  assert.equal([...f.store.blobs.keys()].filter((path) => path.includes('/pending/')).length, 0);
+  assert.ok([...f.queue.jobs.values()].every((job) => job.result && !job.proof));
   const results = await Promise.all(quotes.map(async (q, i) => {
     const response = await f.status(q, f.buyer('buyer-' + i));
     assert.equal(response.status, 200);
@@ -202,15 +226,16 @@ test('75 simultaneous Place order requests finish once each with one Apps Script
   assert.deepEqual(results.map(({ number }) => number), numbers);
 });
 
-test('retrying an upload, a lost Drive result and a failed pending cleanup keep the same receipt', async () => {
+test('retrying after lost database and Drive replies keeps one order and receipt', async () => {
   const f = setup();
   const order = await f.quote();
-  f.store.state.loseWriteReply = true;
+  f.queue.state.loseWriteReply = true;
   const same = await Promise.all(Array.from({ length: 5 }, () => f.place(order, 80)));
-  assert.ok(same.every((reply) => reply.status === 202));
-  const accepted = await Promise.all(same.map((response) => response.json()));
+  assert.equal(same.filter((reply) => reply.status === 503).length, 1);
+  const accepted = await Promise.all(same.filter((reply) => reply.status === 202).map((response) => response.json()));
+  assert.equal(accepted.length, 4);
   assert.deepEqual(new Set(accepted.map(({ number }) => number)), new Set(['MARC_0260010_1']));
-  assert.equal(f.store.blobs.size, 2);
+  assert.equal(f.queue.jobs.size, 1);
   assert.equal((await f.place(order, 81)).status, 409);
   f.state.driveFailure = true;
   assert.equal((await f.drain()).length, 0);
@@ -227,17 +252,16 @@ test('retrying an upload, a lost Drive result and a failed pending cleanup keep 
   assert.equal(f.orders.rows.length, 2);
   const [ack] = await f.drain({ finish: false });
   assert.equal(f.files.size, 1);
-  f.store.state.failDelete = true;
+  f.queue.state.loseCompletionReply = true;
   assert.equal((await f.workerPost(ack)).status, 503);
   const receipt = await (await f.status(order)).json();
-  f.store.state.failDelete = false;
   assert.equal((await f.workerPost(ack)).status, 204);
   const retry = await (await f.place(order, 80)).json();
   assert.equal(retry.number, receipt.number);
   assert.equal(retry.submittedAt, receipt.submittedAt);
   assert.equal(f.orders.rows.length, 2);
   assert.equal(f.files.size, 1);
-  assert.equal(f.store.blobs.size, 2);
+  assert.equal(f.queue.jobs.size, 1);
 });
 
 test('a duplicated transaction ID keeps one order and a private payment submission for review', async () => {
@@ -250,11 +274,14 @@ test('a duplicated transaction ID keeps one order and a private payment submissi
   const states = await Promise.all([first, second].map(async (order) => (await (await f.status(order)).json()).status));
   assert.deepEqual(states, ['under_review', 'needs_attention']);
   assert.equal(f.orders.rows.length, 2);
-  assert.equal(f.files.size, 1);
-  const review = [...f.store.blobs.keys()].filter((path) => path.includes('/review/' + second.id + '/'));
+  assert.equal(f.files.size, 3);
+  const review = [...f.files.keys()].filter((name) => name.startsWith('REVIEW_' + second.id + '_'));
   assert.equal(review.length, 2);
-  const savedProof = f.store.blobs.get(review.find((path) => path.endsWith('/payment-screenshot.png')));
-  assert.deepEqual(savedProof, f.png);
+  const savedProof = f.files.get(review.find((name) => name.endsWith('.png')));
+  assert.deepEqual(savedProof.getBlob().getBytes(), f.png);
+  const reviewDetails = f.files.get(review.find((name) => name.endsWith('.json')));
+  assert.equal(JSON.parse(reviewDetails.getBlob().getDataAsString()).issue, 'reference_in_use');
+  assert.ok([...f.queue.jobs.values()].every((job) => !job.proof));
 });
 
 test('orders use their original collection Sheet and its order ID sequence', async () => {
@@ -323,6 +350,78 @@ test('the queue retains the proof when the early reservation is temporarily unav
   assert.ok(saved.token);
 });
 
+test('the payment screen is withheld if PostgreSQL cannot confirm space for the upload', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const f = setup();
+  f.script.Date = Date;
+  f.queue.state.writesUnavailable = true;
+  const blocked = await f.post('quote', f.fields());
+  assert.equal(blocked.status, 503);
+  const error = await blocked.json();
+  assert.match(error.error, /^Payments are paused/);
+  assert.equal(error.payment, undefined);
+  assert.equal(error.token, undefined);
+
+  now += 15001;
+  f.queue.state.writesUnavailable = false;
+  const [order, another] = await Promise.all([f.quote(), f.quote()]);
+  assert.equal(order.payment.payee, 'IIMT MART');
+  assert.equal(another.payment.payee, order.payment.payee);
+  assert.equal(f.queue.state.checks, 1);
+
+  f.queue.state.writesUnavailable = true;
+  assert.equal((await f.place(order, 123)).status, 503);
+  assert.equal((await f.post('quote', f.fields())).status, 503);
+  assert.equal((await f.post('resume', { quote: order.token })).status, 200);
+  assert.equal((await (await f.status(order)).json()).status, 'not_submitted');
+
+  f.queue.state.writesUnavailable = false;
+  const retry = await f.place(order, 123);
+  assert.equal(retry.status, 202);
+  assert.equal((await retry.json()).number, 'MARC_0260010_1');
+  await f.drain();
+  assert.equal(f.files.size, 1);
+  assert.equal(f.orders.rows.length, 2);
+});
+
+test('the scheduled worker skips idle minute checks and wakes for a new submission', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const f = setup();
+  f.script.Date = Date;
+  const trigger = { triggerUid: 'queue-clock' };
+  let idleScans = 0;
+  const emptyQueue = (call) => {
+    assert.equal(JSON.parse(JSON.parse(call.payload).payload).action, 'list');
+    idleScans++;
+    return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ jobs: [] }) };
+  };
+  f.state.fetchQueue = emptyQueue;
+  f.script.processOrderQueue(trigger);
+  assert.equal(idleScans, 1);
+  now += 60000;
+  f.script.processOrderQueue(trigger);
+  assert.equal(idleScans, 1);
+
+  const order = await f.quote();
+  assert.equal((await f.place(order, 124)).status, 202);
+  assert.ok(Number(f.props.ORDER_QUEUE_AWAKE_UNTIL) > now);
+  now += 60000;
+  assert.equal((await f.drain({ event: trigger })).length, 1);
+  assert.equal(f.files.size, 1);
+
+  f.state.fetchQueue = emptyQueue;
+  now += 6 * 60000;
+  f.script.processOrderQueue(trigger);
+  assert.equal(idleScans, 1);
+  now += 54 * 60000;
+  f.script.processOrderQueue(trigger);
+  assert.equal(idleScans, 2);
+  f.script.processOrderQueue();
+  assert.equal(idleScans, 3);
+});
+
 test('the queue fails safely when unavailable and rejects unsigned or expired worker requests', async () => {
   const f = setup();
   const order = await f.quote();
@@ -330,16 +429,37 @@ test('the queue fails safely when unavailable and rejects unsigned or expired wo
   assert.equal((await f.workerPost({ action: 'list' })).status, 403);
   assert.equal((await f.workerPost(f.envelope({ action: 'list' }, Date.now() - 360000))).status, 403);
   assert.equal((await f.workerPost({ ...f.envelope({ action: 'list' }), payload: '{}' })).status, 403);
-  f.store.state.unavailable = true;
+  f.queue.state.unavailable = true;
   assert.equal((await f.place(order, 110)).status, 503);
   assert.equal(f.state.orderCalls, 0);
-  assert.equal(f.store.blobs.size, 0);
-  f.store.state.unavailable = false;
+  assert.equal(f.queue.jobs.size, 0);
+  f.queue.state.unavailable = false;
   assert.equal((await f.place(order, 110)).status, 202);
   f.env.MARC_ORDER_QUEUE_ENABLED = '0';
   assert.equal((await f.place(order, 110)).status, 202);
   assert.equal(f.state.orderCalls, 0);
   f.env.MARC_ORDER_QUEUE_ENABLED = '1';
-  delete f.env.BLOB_READ_WRITE_TOKEN;
-  assert.equal((await f.post('quote', f.fields())).status, 503);
+  f.env.MARC_PAYMENTS_PAUSED = '1';
+  assert.equal((await f.post('quote', f.fields())).status, 409);
+  assert.equal((await f.post('resume', { quote: order.token })).status, 200);
+});
+
+test('the same receipt is recovered from Sheets after switching queues', async () => {
+  const f = setup();
+  const order = await f.quote();
+  const submitted = await f.place(order, 201);
+  assert.equal(submitted.status, 202);
+  const { number } = await submitted.json();
+  await f.drain();
+
+  f.queue.jobs.clear();
+  const status = await f.status(order);
+  assert.equal(status.status, 200);
+  assert.equal((await status.json()).number, number);
+
+  const impersonator = f.buyer('other-buyer');
+  const differentQuote = await f.quote(impersonator, { id: order.id });
+  const unrelated = await f.status(differentQuote, impersonator);
+  assert.equal(unrelated.status, 200);
+  assert.equal((await unrelated.json()).status, 'not_submitted');
 });
