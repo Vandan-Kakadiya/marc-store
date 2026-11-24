@@ -142,6 +142,18 @@ export function changeBag(reduce, orderId = null) {
     return state.items;
   });
 }
+export function removeBagSkus(skus) {
+  const generation = bagGeneration;
+  const keep = (items) => items.filter(({ sku }) => !skus.has(sku));
+  return withBagLock(async () => {
+    const guest = bagState();
+    const items = keep(guest.items);
+    if (items.length !== guest.items.length)
+      save(localStorage, BAG, { ...guest, items });
+    if (generation === bagGeneration && accountBag?.items.some(({ sku }) => skus.has(sku)))
+      await updateAccountBag(keep, crypto.randomUUID());
+  });
+}
 export function node(tag, cls, text) {
   const el = document.createElement(tag);
   if (cls) el.className = cls;
@@ -339,6 +351,8 @@ function saveCatalogue(data) {
         }))
       : [],
     open: data.ready === true,
+    // A failed catalogue build can still publish an empty, paused snapshot.
+    canPruneBag: /^[a-f0-9]{64}$/.test(data.version) && Boolean(skus.length || data.payment),
     version: data.version,
     limit: data.maxItems,
     terms: data.terms

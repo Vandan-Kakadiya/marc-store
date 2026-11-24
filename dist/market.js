@@ -15,12 +15,14 @@ import {
   picture,
   publishedCatalogue,
   read,
+  removeBagSkus,
   save,
   syncBag
 } from './market-core.js?v=14';
 const published = publishedCatalogue();
+const indexSkus = (catalogue) => new Map(catalogue.skus.map((row) => [row.sku, row]));
 let catalog = published || cachedCatalogue(),
-  bag = getBag(),
+  skusById = indexSkus(catalog),
   busy = false,
   seenLive = Boolean(published),
   noticed = '',
@@ -43,7 +45,8 @@ const groups = () =>
   );
 const groupKey = (rows) =>
   JSON.stringify([rows[0].name.toLowerCase(), rows[0].colour.toLowerCase()]);
-const count = (items = bag) => items.reduce((n, r) => n + r.qty, 0);
+const listedBagItems = (items = getBag()) => items.filter(({ sku }) => skusById.has(sku));
+const count = (items) => listedBagItems(items).reduce((n, r) => n + r.qty, 0);
 const allowsOrder = () => configured && catalog.open;
 const setText = (el, text) => {
   if (el.textContent !== text) el.textContent = text;
@@ -62,8 +65,8 @@ const toast = (message) => {
 };
 async function updateBag(reduce, reportError = toast) {
   try {
-    bag = await changeBag(reduce);
-    $('bag-count').textContent = count();
+    await changeBag(reduce);
+    setText($('bag-count'), String(count()));
     return true;
   } catch (e) {
     reportError(e.message);
@@ -192,6 +195,12 @@ async function refresh() {
     if (key !== catalogKey) {
       catalog = next;
       catalogKey = key;
+      skusById = indexSkus(catalog);
+    }
+    if (next.canPruneBag) {
+      const removed = new Set(getBag().filter(({ sku }) => !skusById.has(sku)).map(({ sku }) => sku));
+      // The bag already hides these items. Retry saving the cleanup on the next refresh if needed.
+      if (removed.size) void removeBagSkus(removed).catch(() => {});
     }
     seenLive = true;
     noticed = '';
@@ -534,6 +543,7 @@ function renderProduct(rows) {
     let errorMessage = '';
     const added = await updateBag(
       (items) => {
+        if (!skusById.has(sku)) throw Error('This option is no longer listed.');
         if (count(items) + qty > catalog.limit)
           throw Error('This quantity would exceed the order limit.');
         const line = items.find((r) => r.sku === sku);
@@ -550,8 +560,7 @@ function renderProduct(rows) {
       toast('Added to your bag.');
       return;
     }
-    bag = getBag();
-    $('bag-count').textContent = count();
+    setText($('bag-count'), String(count()));
     updatePurchaseOptions();
     orderNote.textContent = errorMessage;
   });
@@ -594,9 +603,11 @@ function begin(flow, items) {
     location.assign('checkout.html');
     return;
   }
+  const available = listedBagItems(items);
+  if (!available.length) return;
   const draft = {
     flow,
-    items: items.map((r) => ({ sku: r.sku, qty: r.qty })),
+    items: available.map((r) => ({ sku: r.sku, qty: r.qty })),
     id: crypto.randomUUID(),
     created: Date.now()
   };
@@ -616,9 +627,9 @@ function refreshBag() {
   if (!configured || bagRefresh) return bagRefresh;
   const previous = JSON.stringify([bagSignedIn(), getBag()]);
   bagRefresh = syncBag().then((items) => {
-    bag = items;
-    $('bag-count').textContent = count();
+    setText($('bag-count'), String(count()));
     if ($('bag').open && previous !== JSON.stringify([bagSignedIn(), items])) renderBag();
+    if (items.some(({ sku }) => !skusById.has(sku))) void refresh();
   }).catch((error) => {
     if ($('bag').open) toast(error.message);
   }).finally(() => {
@@ -629,7 +640,7 @@ function refreshBag() {
 function renderBag() {
   const out = $('bag-body');
   out.replaceChildren();
-  bag = getBag();
+  const bag = listedBagItems();
   if (!bag.length) {
     out.append(
       node('p', 'card-meta', 'Your bag is empty.'),
@@ -641,28 +652,24 @@ function renderBag() {
     if (configured && !bagSignedIn()) out.append(bagSignIn());
     return;
   }
-  let total = 0,
-    missing = false;
+  let total = 0;
+  const itemCount = count(bag);
   for (const item of bag) {
-    const row = catalog.skus.find((s) => s.sku === item.sku);
+    const row = skusById.get(item.sku);
+    const amount = row.paise * item.qty;
+    total += amount;
     const line = node('div', 'bag-item'),
       text = node('div');
     text.append(
-      node('strong', '', row?.name || item.sku),
-      node(
-        'p',
-        'line-meta',
-        row ? row.colour + ' / ' + row.size : 'Currently unavailable'
-      )
+      node('strong', '', row.name),
+      node('p', 'line-meta', row.colour + ' / ' + row.size)
     );
-    if (row) total += row.paise * item.qty;
-    else missing = true;
     const control = node('div', 'control');
     for (const delta of [-1, 1]) {
       const b = btn(delta === 1 ? '+' : '−', '', async () => {
         await updateBag((current) => {
           const entry = current.find((r) => r.sku === item.sku);
-          if (entry && (delta < 0 || count(current) < catalog.limit))
+          if (entry && (delta < 0 || (skusById.has(item.sku) && count(current) < catalog.limit)))
             entry.qty += delta;
           return current.filter((r) => r.qty > 0);
         });
@@ -672,15 +679,15 @@ function renderBag() {
         'aria-label',
         (delta === 1 ? 'Increase ' : 'Decrease ') + item.sku + ' quantity'
       );
-      b.disabled = delta > 0 && (!row || count() >= catalog.limit);
+      b.disabled = delta > 0 && itemCount >= catalog.limit;
       if (delta === 1) control.append(node('span', '', item.qty));
       control.append(b);
     }
     text.append(control);
     line.append(
-      picture(row || { name: '—', colour: '' }, 'thumb'),
+      picture(row, 'thumb'),
       text,
-      node('strong', '', row ? money(row.paise * item.qty) : '—')
+      node('strong', '', money(amount))
     );
     out.append(line);
   }
@@ -688,12 +695,12 @@ function renderBag() {
   totals.append(node('span', '', 'Subtotal'), node('strong', '', money(total)));
   out.append(totals);
   const check = btn('Continue to checkout →', 'action navy', () =>
-    begin('bag', bag)
+    begin('bag', getBag())
   );
-  check.disabled = missing || !allowsOrder() || count() > catalog.limit;
+  check.disabled = !allowsOrder() || itemCount > catalog.limit;
   out.append(check);
   if (configured && !bagSignedIn()) out.append(bagSignIn());
-  if (missing || count() > catalog.limit)
+  if (itemCount > catalog.limit)
     out.append(
       node('p', 'status', 'Adjust the items in your bag before checkout.')
     );
@@ -701,6 +708,7 @@ function renderBag() {
 $('open-bag').onclick = () => {
   renderBag();
   $('bag').showModal();
+  void refresh();
   void refreshBag();
 };
 $('retry').onclick = refresh;
@@ -722,10 +730,7 @@ for (const b of document.querySelectorAll('[data-close]'))
 $('search').oninput = () => repaint();
 $('type').onchange = () => repaint();
 window.addEventListener('storage', (e) => {
-  if (e.key === BAG) {
-    bag = getBag();
-    repaint(true);
-  }
+  if (e.key === BAG) repaint(true);
 });
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
