@@ -538,6 +538,16 @@ footer {
   background: var(--deep);
   color: white;
 }
+.order-support {
+  padding-top: 14px;
+  color: #e1e5f2;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.order-support a {
+  overflow-wrap: anywhere;
+  text-underline-offset: 3px;
+}
 .foot {
   justify-content: space-between;
   gap: 14px;
