@@ -1,4 +1,5 @@
 import { skuPattern, sha256Pattern } from './common.js';
+import { homepageVideos as validateHomepageVideos } from '../dist/hero-video.js';
 
 export const emptyCatalogue = {
   apiVersion: 3,
@@ -135,6 +136,7 @@ export function validateCatalogue(obj) {
         .slice(0, 6)
         .map(({ image, title, href }) => ({ image, title, href }))
     : [];
+  const homepageVideos = validateHomepageVideos(obj.homepageVideos);
   const p = obj.payment;
   const merchantCode = typeof p?.merchantCode === 'string' && /^[0-9]{4}$/.test(p.merchantCode)
     ? p.merchantCode
@@ -163,6 +165,7 @@ export function validateCatalogue(obj) {
     ready: obj.ready,
     products,
     ...(homepageBanners.length ? { homepageBanners } : {}),
+    ...(homepageVideos.length ? { homepageVideos } : {}),
     maxItems: obj.maxItems,
     version: obj.version,
     ...(obj.collection ? { collection: obj.collection } : {}),

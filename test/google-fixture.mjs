@@ -118,6 +118,7 @@ export function googleFixture(site = 'https://marc-test.example') {
     open: true,
     redeploys: 0,
     bannerChoices: null,
+    videoChoices: null,
     choices: [
       'POLO-W-M | MARC Polo | White | M | 799',
       'POLO-W-L | MARC Polo | White | L | 799',
@@ -200,7 +201,10 @@ export function googleFixture(site = 'https://marc-test.example') {
             makeItem('[marc:catalog]', 'SKU catalogue', () => state.choices),
             ...(state.bannerChoices === null
               ? []
-              : [makeItem('', 'Homepage banners', () => state.bannerChoices)])
+              : [makeItem('', 'Homepage banners', () => state.bannerChoices)]),
+            ...(state.videoChoices === null
+              ? []
+              : [makeItem('[marc:hero-videos]', 'Campaign playlist', () => state.videoChoices)])
           ]
         : [makeItem('[marc:quantity]', 'Total quantity', () => state.sizes)],
     getDescription: () => 'Campus pickup',

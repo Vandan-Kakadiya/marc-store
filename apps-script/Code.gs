@@ -840,22 +840,29 @@ function finishOrder_(tab, columns, o, evidence, link) {
   return savedReceipt_(o.id, saved, number);
 }
 
-function taggedItem_(form, type, tag, title, asTyped, optional) {
-  var items = form.getItems(type).map(asTyped);
-  var tagged = items.filter(function (item) {
-    return (item.getHelpText() || '')
-      .toLowerCase()
-      .includes('[marc:' + tag + ']');
+function formItems_(form, type, asTyped) {
+  return form.getItems(type).map(function (raw) {
+    var item = asTyped(raw);
+    return {
+      item: item,
+      tag: (item.getHelpText() || '').toLowerCase(),
+      title: item.getTitle().trim().toLowerCase()
+    };
+  });
+}
+function taggedItem_(items, tag, title, optional) {
+  var tagged = items.filter(function (entry) {
+    return entry.tag.includes('[marc:' + tag + ']');
   });
   var found = tagged.length
     ? tagged
-    : items.filter(function (item) {
-        return item.getTitle().trim().toLowerCase() === title;
+    : items.filter(function (entry) {
+        return entry.title === title;
       });
   if (optional && !found.length) return null;
   if (found.length !== 1)
     throw Error('Check the ' + title + ' question and its type.');
-  return found[0];
+  return found[0].item;
 }
 function localImage_(raw) {
   if (!raw) return '';
@@ -881,17 +888,10 @@ function safeHTTPS_(v) {
     /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?\/[^\s<>"]+$/.test(v)
   );
 }
-function homepageBanners_(form) {
+function homepageBanners_(checkboxes) {
   var choices;
   try {
-    var question = taggedItem_(
-      form,
-      FormApp.ItemType.CHECKBOX,
-      'banners',
-      'homepage banners',
-      function (item) { return item.asCheckboxItem(); },
-      true
-    );
+    var question = taggedItem_(checkboxes, 'banners', 'homepage banners', true);
     if (!question) return [];
     choices = question.getChoices();
   } catch (error) {
@@ -925,6 +925,50 @@ function homepageBanners_(form) {
     }
   }
   return banners;
+}
+
+function heroVideoPath_(raw) {
+  if (safeHTTPS_(raw) && !/[#\\]/.test(raw) && /\.mp4$/i.test(raw.split('?')[0]))
+    return raw;
+  var path = decodeURIComponent(raw.replace(/^\.\//, ''));
+  if (
+    !/^assets\/[A-Za-z0-9_ .()/\-]+\.mp4$/i.test(path) ||
+    !path.startsWith('assets/') ||
+    path.split('/').some(function (part) {
+      return !part || part === '.' || part === '..';
+    })
+  )
+    throw Error('Use a deployed assets/ path or a direct HTTPS MP4 URL.');
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+function homepageVideos_(checkboxes) {
+  var choices;
+  try {
+    var question = taggedItem_(checkboxes, 'hero-videos', 'homepage videos', true);
+    if (!question) return [];
+    choices = question.getChoices();
+  } catch (error) {
+    console.warn('Could not read Homepage videos. ' + error.message);
+    return [];
+  }
+  var videos = [], seen = new Set();
+  for (var i = 0; i < choices.length && videos.length < 6; i++) {
+    try {
+      var fields = choices[i].getValue().split('|').map(function (field) {
+        return field.trim();
+      });
+      if (fields.length !== 2 || fields.some(function (field) { return field.length > 1500; }))
+        throw Error('Use one desktop video and one phone video per option.');
+      var desktop = heroVideoPath_(fields[0]), mobile = heroVideoPath_(fields[1]);
+      var key = JSON.stringify([desktop, mobile]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      videos.push({ desktop: desktop, mobile: mobile });
+    } catch (error) {
+      console.warn('Check Homepage videos option ' + (i + 1) + '.');
+    }
+  }
+  return videos;
 }
 function optionalSkuImage_(value, label, sku) {
   try {
@@ -1149,25 +1193,16 @@ function catalogue_(p) {
     terms: '',
     payment: null
   };
+  var checkboxes = [];
   try {
-    var choices = taggedItem_(
-      form,
-      FormApp.ItemType.CHECKBOX,
-      'catalog',
-      'sku catalogue',
-      function (i) {
-        return i.asCheckboxItem();
-      }
-    ).getChoices();
-    var limits = taggedItem_(
-      form,
-      FormApp.ItemType.LIST,
-      'quantity',
-      'total quantity',
-      function (i) {
-        return i.asListItem();
-      }
-    ).getChoices();
+    checkboxes = formItems_(form, FormApp.ItemType.CHECKBOX, function (i) {
+      return i.asCheckboxItem();
+    });
+    var choices = taggedItem_(checkboxes, 'catalog', 'sku catalogue').getChoices();
+    var dropdowns = formItems_(form, FormApp.ItemType.LIST, function (i) {
+      return i.asListItem();
+    });
+    var limits = taggedItem_(dropdowns, 'quantity', 'total quantity').getChoices();
     if (
       !limits.length ||
       limits.length > 100 ||
@@ -1200,8 +1235,10 @@ function catalogue_(p) {
   } catch (error) {
     console.warn('Catalogue paused. ' + error.message);
   }
-  var homepageBanners = homepageBanners_(form);
+  var homepageBanners = homepageBanners_(checkboxes);
   if (homepageBanners.length) draft.homepageBanners = homepageBanners;
+  var homepageVideos = homepageVideos_(checkboxes);
+  if (homepageVideos.length) draft.homepageVideos = homepageVideos;
   var collection = collectionKey_(p, orderRoute_(p));
   if (p['ORDER_COLLECTION_' + collection]) draft.collection = collection;
   draft.version = digest_(JSON.stringify(draft));

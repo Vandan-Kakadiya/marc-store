@@ -344,6 +344,7 @@ function saveCatalogue(data) {
   });
   const catalog = {
     skus,
+    homepageVideos: data.homepageVideos,
     homepageBanners: Array.isArray(data.homepageBanners)
       ? data.homepageBanners.map((banner) => ({
           ...banner,

@@ -148,6 +148,20 @@ To activate automatic SKU updates after the first successful Vercel deploy:
 
 The storefront loads the latest published catalogue from Vercel. The customer can see both the catalogue and checkout while Apps Script is idle. The Form’s Accepting responses switch applies to new quotes after the next catalogue deployment. Buyers who already reached the QR can submit proof at their quoted total for up to seven days. Change the QR image filename if the account changes so already quoted orders retain the correct image.
 
+### Homepage videos
+
+1. In the existing Google Form, add an optional **Checkboxes** question named **Homepage videos**. Set the question description to `[marc:hero-videos]`.
+2. Paste this line as one option to show the included winter collection video behind **The Campus Store**.
+
+   ```text
+   assets/videos/marc-winter-desktop-walk.mp4 | assets/videos/marc-winter-mobile-walk.mp4
+   ```
+
+3. Keep the video files in `dist/assets/videos/` in GitHub. For future campaigns, add a desktop and phone MP4 there and add one Form option per pair in the same format. Direct public HTTPS links to MP4 files also work.
+4. Save the Form. The existing catalogue sync picks up the change on its next check. To request a build immediately, run **publishCatalogueIfChanged** in Apps Script and wait for the Vercel deployment to finish.
+
+The first valid option plays first. Up to six pairs play in Form order. A single video loops. Delete the question or remove the video options to restore the regular homepage banner layout. Visitors can pause the video, and the regular layout appears when their browser requests reduced motion or data savings.
+
 ## 7. Test and reconcile an order on the existing domain
 
 1. Open your store in a private browser tab. Choose a size and **Add to bag**. Open the same product and click **Buy now**. The summary should show one selected item and keep the item in the earlier bag.

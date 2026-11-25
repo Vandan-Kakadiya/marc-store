@@ -19,7 +19,9 @@ import {
   save,
   syncBag
 } from './market-core.js?v=14';
+import { setupHeroVideo } from './hero-video.js';
 const published = publishedCatalogue();
+const renderHeroVideo = setupHeroVideo();
 const indexSkus = (catalogue) => new Map(catalogue.skus.map((row) => [row.sku, row]));
 let catalog = published || cachedCatalogue(),
   skusById = indexSkus(catalog),
@@ -52,7 +54,7 @@ const setText = (el, text) => {
   if (el.textContent !== text) el.textContent = text;
 };
 const catalogueKey = (c) =>
-  JSON.stringify([c.skus, c.homepageBanners, c.open, c.version, c.limit, c.terms]);
+  JSON.stringify([c.skus, c.homepageBanners, c.homepageVideos, c.open, c.version, c.limit, c.terms]);
 let catalogKey = catalogueKey(catalog),
   cardsFor = null,
   cards = [],
@@ -123,6 +125,7 @@ function buildCards() {
 }
 function repaint(dialogs = false) {
   renderHomepageBanners();
+  renderHeroVideo(catalog.homepageVideos);
   // Cards are rebuilt only when the catalogue changes. Searching, filtering
   // and the background refresh just show or hide the existing cards.
   const changed = cardsFor !== catalog;

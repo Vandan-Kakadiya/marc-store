@@ -19,7 +19,7 @@
     />
     <!-- marc:lcp-preload -->
     <link rel="modulepreload" href="market-core.js?v=14" />
-    <link rel="stylesheet" href="market.css?v=26" />
+    <link rel="stylesheet" href="market.css?v=27" />
     <style>
       @font-face {
         font-family: "Barlow Condensed";
@@ -114,7 +114,7 @@
       }
     </style>
     <script id="catalogue-snapshot" type="application/json"></script>
-    <script type="module" src="market.js?v=20"></script>
+    <script type="module" src="market.js?v=21"></script>
   </head>
   <body class="store-home">
     <div id="store-loading" role="status" hidden>
@@ -177,25 +177,32 @@
       </div>
     </header>
     <main>
-      <section class="hero">
-        <div class="wrap hero-grid">
-          <div class="hero-copy">
-            <p class="kicker"><span></span>IIM TIRUCHIRAPPALLI</p>
-            <h1>THE CAMPUS<br /><em>STORE</em></h1>
-            <p class="hero-intro">
-              Year-round merchandise from the Merchandise and Retail Committee
-              at IIM Trichy.
-            </p>
-            <a class="action light" href="#shop">Shop merchandise</a>
+      <section class="hero" id="store-hero">
+        <div id="hero-stage" class="hero-stage">
+          <div class="hero-video-layer" aria-hidden="true">
+            <video id="hero-video" muted playsinline preload="none" disablepictureinpicture tabindex="-1"></video>
           </div>
-          <div
-            id="home-banners"
-            class="campaign"
-            role="region"
-            aria-label="Homepage promotions"
-            hidden
-          ></div>
+          <div class="wrap hero-grid">
+            <div class="hero-copy">
+              <p class="kicker"><span></span>IIM TIRUCHIRAPPALLI</p>
+              <h1>THE CAMPUS<br /><em>STORE</em></h1>
+              <p class="hero-intro">
+                Year-round merchandise from the Merchandise and Retail Committee
+                at IIM Trichy.
+              </p>
+              <a class="action light" href="#shop">Shop merchandise</a>
+            </div>
+            <div
+              id="home-banners"
+              class="campaign"
+              role="region"
+              aria-label="Homepage promotions"
+              hidden
+            ></div>
+          </div>
+          <button class="hero-video-toggle" id="hero-video-toggle" type="button" hidden>Pause video</button>
         </div>
+        <div id="hero-promotions" class="wrap hero-promotions"></div>
       </section>
       <section class="wrap shop" id="shop" aria-labelledby="shop-title">
         <div class="section-head">
