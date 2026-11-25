@@ -639,6 +639,9 @@ async function myOrders(turn) {
   if (!receipts.length && !current && !issueRows.size) {
     list.append(node('p', 'card-meta', 'No orders found for this Google account.'));
   }
+  if (historyResult.historyUnavailable) {
+    list.prepend(node('p', 'card-meta', 'Saved orders could not be loaded. Try again shortly.'));
+  }
 
   for (const entry of receipts) {
     const row = node('div', 'past-order');

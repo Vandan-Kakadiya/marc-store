@@ -43,6 +43,10 @@ const checkoutIssueMessages = new Map([
   ['retry_different', 'Use the same payment method, UTR and screenshot from your first submission.'],
   ['unconfirmed', 'The store could not confirm the upload. Retry from the original checkout with the same UTR and screenshot.']
 ]);
+const checkoutStorageMessages = new Map([
+  ['busy', 'Order storage is busy. Retry with the same UTR and screenshot.'],
+  ['setup', 'Order storage needs attention. Contact MARC with your order reference.']
+]);
 function rejectCheckoutIssue(reason) {
   const error = new CheckoutError(409, checkoutIssueMessages.get(reason));
   error.checkoutIssue = reason;
@@ -285,7 +289,10 @@ async function submit(req, env, buyer, fetcher, queue, queueHealth) {
     await callScript(env, 'recordCheckoutIssue', {
       id: quote.id,
       buyer: buyer.sub,
+      name: order.contact.name,
+      email: buyer.email,
       reason: error?.checkoutIssue || 'unconfirmed',
+      stage: error?.checkoutStage,
       expires: quote.expires
     }, fetcher, 5000).catch(() => {});
     throw error;
@@ -328,20 +335,13 @@ function orderResult(result, quote, env, buyer, summary = quote) {
   if (!result.ok) {
     if (result.code === 'reference_in_use' || result.code === 'retry_different')
       rejectCheckoutIssue(result.code);
-    if (result.code === 'busy')
-      fail(
-        503,
-        'Order storage is busy. Retry with the same UTR and screenshot.'
-      );
-    if (result.code === 'setup')
-      fail(
-        503,
-        'Order storage needs attention. Contact MARC with your order reference.'
-      );
-    fail(
+    const error = new CheckoutError(
       503,
-      'Google has not confirmed the save yet. Retry with the same UTR and screenshot.'
+      checkoutStorageMessages.get(result.code) ||
+        'Google has not confirmed the save yet. Retry with the same UTR and screenshot.'
     );
+    error.checkoutStage = result.stage;
+    throw error;
   }
   const saved = result.data;
   if (
@@ -409,6 +409,7 @@ async function orderHistory(receipts, env, buyer, fetcher, includeCheckoutIssues
   const issues = Array.isArray(result.issues) ? result.issues : [];
   return {
     orders: result.data,
+    ...(result.historyUnavailable === true ? { historyUnavailable: true } : {}),
     checkoutIssues: issues.flatMap((issue) => {
       const message = checkoutIssueMessages.get(issue?.reason);
       return message && orderPattern.test(issue?.id || '') && !savedIds.has(issue.id)
