@@ -38,6 +38,16 @@ const orderNumberPattern = /^MARC_(?:[0-9]{6,7}|STAFF|OTHER)_[1-9][0-9]*$/;
 const proofTypes = ['image/png', 'image/jpeg', 'image/webp'];
 const bankTransfer = 'Bank transfer (NEFT / IMPS / RTGS)';
 const paymentMethods = ['GPay', 'PhonePe', 'Paytm', 'CRED', bankTransfer, 'Others'];
+const checkoutIssueMessages = new Map([
+  ['reference_in_use', 'This transaction ID is already recorded. Check it or contact MARC.'],
+  ['retry_different', 'Use the same payment method, UTR and screenshot from your first submission.'],
+  ['unconfirmed', 'The store could not confirm the upload. Retry from the original checkout with the same UTR and screenshot.']
+]);
+function rejectCheckoutIssue(reason) {
+  const error = new CheckoutError(409, checkoutIssueMessages.get(reason));
+  error.checkoutIssue = reason;
+  throw error;
+}
 function storageReady(env) {
   return !!(
     scriptEndpoint(env.MARC_SCRIPT_URL) &&
@@ -268,6 +278,21 @@ async function submit(req, env, buyer, fetcher, queue, queueHealth) {
       : {}),
     proof: { mime: proof.type }
   };
+  try {
+    return await savePaymentProof(order, bytes, quote, env, buyer, fetcher, queue, queueHealth);
+  } catch (error) {
+    // The notice is best effort. Keep the original response even if logging fails.
+    await callScript(env, 'recordCheckoutIssue', {
+      id: quote.id,
+      buyer: buyer.sub,
+      reason: error?.checkoutIssue || 'unconfirmed',
+      expires: quote.expires
+    }, fetcher, 5000).catch(() => {});
+    throw error;
+  }
+}
+
+async function savePaymentProof(order, bytes, quote, env, buyer, fetcher, queue, queueHealth) {
   let result;
   if (quote.queued || queueEnabled(env)) {
     if (!queue) fail(503, 'MARC is setting up order storage.');
@@ -301,13 +326,8 @@ async function submit(req, env, buyer, fetcher, queue, queueHealth) {
 
 function orderResult(result, quote, env, buyer, summary = quote) {
   if (!result.ok) {
-    if (result.code === 'reference_in_use')
-      fail(
-        409,
-        'This transaction ID is already recorded. Check it or contact MARC.'
-      );
-    if (result.code === 'retry_different')
-      fail(409, 'Use the same payment method, UTR and screenshot from your first submission.');
+    if (result.code === 'reference_in_use' || result.code === 'retry_different')
+      rejectCheckoutIssue(result.code);
     if (result.code === 'busy')
       fail(
         503,
@@ -366,7 +386,7 @@ function ownReceipts(tokens, env, buyer) {
   return visible;
 }
 
-async function orderHistory(receipts, env, buyer, fetcher) {
+async function orderHistory(receipts, env, buyer, fetcher, includeCheckoutIssues = false) {
   if (!storageReady(env)) fail(503, 'MARC is setting up order storage.');
   const orderIds = receipts.map((r) => r.id);
   let result;
@@ -374,7 +394,8 @@ async function orderHistory(receipts, env, buyer, fetcher) {
     result = await callScript(
       env,
       'listOrders',
-      { buyer: buyer.sub, email: buyer.googleEmail ? buyer.email : '', orderIds },
+      { buyer: buyer.sub, email: buyer.googleEmail ? buyer.email : '', orderIds,
+        ...(includeCheckoutIssues ? { includeCheckoutIssues: true } : {}) },
       fetcher,
       10000
     );
@@ -383,7 +404,18 @@ async function orderHistory(receipts, env, buyer, fetcher) {
   }
   if (!result.ok || !Array.isArray(result.data))
     fail(503, 'Your orders could not be loaded. Try again.');
-  return result.data;
+  if (!includeCheckoutIssues) return result.data;
+  const savedIds = new Set([...receipts, ...result.data].map(({ id }) => id));
+  const issues = Array.isArray(result.issues) ? result.issues : [];
+  return {
+    orders: result.data,
+    checkoutIssues: issues.flatMap((issue) => {
+      const message = checkoutIssueMessages.get(issue?.reason);
+      return message && orderPattern.test(issue?.id || '') && !savedIds.has(issue.id)
+        ? [{ id: issue.id, message }]
+        : [];
+    })
+  };
 }
 
 async function displayReceipts(tokens, env, buyer, fetcher) {
@@ -543,7 +575,10 @@ export function createCheckout({
         case 'receipts':
           return await displayReceipts(body.tokens, env, buyer, fetcher);
         case 'history':
-          return json(await orderHistory(ownReceipts(body.tokens ?? [], env, buyer), env, buyer, fetcher));
+          return json(await orderHistory(
+            ownReceipts(body.tokens ?? [], env, buyer), env, buyer, fetcher,
+            body.includeCheckoutIssues === true
+          ));
         default:
           fail(404, 'Unknown checkout request.');
       }

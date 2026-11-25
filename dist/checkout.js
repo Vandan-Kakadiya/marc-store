@@ -498,6 +498,7 @@ async function myOrders(turn) {
   const submitted = active && (active.sent || active.queued);
   const list = node('div');
   const current = submitted ? node('div', 'past-order') : null;
+  const issueRows = new Map();
   const uploadCheckUntil = Date.now() + 65000;
   let savedInHistory = false;
   let title;
@@ -538,6 +539,8 @@ async function myOrders(turn) {
       if (entry.id !== active.id) throw Error('Order status could not be confirmed.');
 
       if (entry.token) {
+        issueRows.get(entry.id)?.remove();
+        current.hidden = false;
         if (!savedInHistory) renderReceipt(current, entry, true);
         await finishSubmission(entry, turn);
         return;
@@ -590,9 +593,9 @@ async function myOrders(turn) {
   message('Loading your orders…');
   if (current) void checkCurrent();
 
-  let receipts;
+  let historyResult;
   try {
-    receipts = await post('history', { tokens });
+    historyResult = await post('history', { tokens, includeCheckoutIssues: true });
   } catch (error) {
     if (turn !== loadCount) return;
     if (!current || error.status === 401) throw error;
@@ -602,6 +605,8 @@ async function myOrders(turn) {
   }
   if (turn !== loadCount) return;
 
+  const receipts = Array.isArray(historyResult) ? historyResult : historyResult.orders;
+  const issues = Array.isArray(historyResult.checkoutIssues) ? historyResult.checkoutIssues : [];
   savedInHistory = !!active && receipts.some((entry) => entry.id === active.id);
   if (savedInHistory) {
     current?.remove();
@@ -612,7 +617,26 @@ async function myOrders(turn) {
     );
   }
 
-  if (!receipts.length && !current) {
+  for (const issue of issues) {
+    const originalCheckout = current && active.id === issue.id;
+    // The current device may have recovered this order while history was loading.
+    if (originalCheckout && draft?.receipt) continue;
+    const row = node('div', 'past-order');
+    row.append(
+      node('strong', '', 'Payment upload needs attention'),
+      node('p', '', issue.message),
+      node('p', 'line-meta', 'Checkout reference ' + issue.id),
+      node('p', 'line-meta', 'If you already paid, use your original checkout. Pay only once.')
+    );
+    if (originalCheckout) {
+      current.hidden = true;
+      row.append(btn('Return to checkout', 'text-btn', () => location.assign('checkout.html')));
+    }
+    issueRows.set(issue.id, row);
+    list.append(row);
+  }
+
+  if (!receipts.length && !current && !issueRows.size) {
     list.append(node('p', 'card-meta', 'No orders found for this Google account.'));
   }
 

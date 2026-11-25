@@ -34,19 +34,19 @@ let catalog = published || cachedCatalogue(),
   refreshTime = published ? Date.now() : 0;
 let toastTimer, activeProductMedia, activeBanners;
 let activeProductTab = 0;
+const girlsSection = $('girls-edition');
+const girlsProducts = $('girls-products');
+const isGirlsEdition = (row) => /^GIRLS-/i.test(row.sku);
+const groupKey = ([row]) =>
+  JSON.stringify([row.name.toLowerCase(), row.colour.toLowerCase(), isGirlsEdition(row)]);
 const groups = () =>
   Object.values(
     catalog.skus.reduce((all, row) => {
-      const key = JSON.stringify([
-        row.name.toLowerCase(),
-        row.colour.toLowerCase()
-      ]);
+      const key = groupKey([row]);
       (all[key] ??= []).push(row);
       return all;
     }, Object.create(null))
   );
-const groupKey = (rows) =>
-  JSON.stringify([rows[0].name.toLowerCase(), rows[0].colour.toLowerCase()]);
 const listedBagItems = (items = getBag()) => items.filter(({ sku }) => skusById.has(sku));
 const count = (items) => listedBagItems(items).reduce((n, r) => n + r.qty, 0);
 const allowsOrder = () => configured && catalog.open;
@@ -121,7 +121,14 @@ function buildCards() {
     return { rows, card, text };
   });
   emptyNote = node('p', 'card-meta');
-  $('products').replaceChildren(...cards.map((c) => c.card), emptyNote);
+  const generalCards = [];
+  const girlsCards = [];
+  for (const { rows, card } of cards) {
+    const target = girlsProducts && isGirlsEdition(rows[0]) ? girlsCards : generalCards;
+    target.push(card);
+  }
+  $('products').replaceChildren(...generalCards, emptyNote);
+  girlsProducts?.replaceChildren(...girlsCards);
 }
 function repaint(dialogs = false) {
   renderHomepageBanners();
@@ -149,12 +156,18 @@ function repaint(dialogs = false) {
     : $('search').value.toLowerCase().trim();
   const filter = $('filters').hidden ? '' : type.value;
   let shown = 0;
+  let shownGirls = 0;
   for (const { rows, card, text } of cards) {
     const visible =
       (!filter || rows[0].name === filter) && (!query || text.includes(query));
     if (card.hidden === visible) card.hidden = !visible;
-    if (visible) shown++;
+    if (visible) {
+      shown++;
+      if (girlsProducts && isGirlsEdition(rows[0])) shownGirls++;
+    }
   }
+  if (girlsSection) girlsSection.hidden = shownGirls === 0;
+  $('products').hidden = shownGirls > 0 && shown === shownGirls;
   setText($('result-count'), shown + ' ' + (shown === 1 ? 'style' : 'styles'));
   emptyNote.hidden = shown > 0;
   if (!shown)

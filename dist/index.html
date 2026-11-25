@@ -112,9 +112,17 @@
       #home-banners .gallery-dot::before {
         box-shadow: 0 0 2px 1px #0008;
       }
+
+      #girls-edition {
+        margin-top: clamp(32px, 5vw, 64px);
+      }
+
+      #products[hidden] + #girls-edition {
+        margin-top: 20px;
+      }
     </style>
     <script id="catalogue-snapshot" type="application/json"></script>
-    <script type="module" src="market.js?v=21"></script>
+    <script type="module" src="market.js?v=22"></script>
   </head>
   <body class="store-home">
     <div id="store-loading" role="status" hidden>
@@ -227,6 +235,12 @@
         <p class="status" id="catalog-status" role="status"></p>
         <button class="text-btn" id="retry" hidden>Retry catalogue</button>
         <div class="grid" id="products"></div>
+        <section id="girls-edition" aria-labelledby="girls-edition-title" hidden>
+          <div class="section-head">
+            <h2 id="girls-edition-title">Girl's Edition</h2>
+          </div>
+          <div class="grid" id="girls-products"></div>
+        </section>
         <noscript
           >Enable JavaScript to browse sizes and place an order.</noscript
         >

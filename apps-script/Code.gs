@@ -1,5 +1,10 @@
 /** MARC server-to-server receiver. Copy this file into a standalone Apps Script project. */
 var ORDER_TAB = 'MARC Website Orders';
+var CHECKOUT_ISSUE_TAB = 'MARC Checkout Issues';
+var CHECKOUT_ISSUE_HEADERS = [
+  'Account and checkout key', 'Checkout reference', 'Issue', 'Last failed (UTC)', 'Expires (UTC)'
+];
+var CHECKOUT_ISSUE_CODES = ['retry_different', 'reference_in_use', 'unconfirmed'];
 var PAYMENT_SCREENSHOT_HEADER = 'Payment screenshot';
 var HEADINGS = [
   'Order ID',
@@ -113,6 +118,8 @@ function doPost(event) {
       return output_(reserveQueuedOrder_(props, request.data));
     if (request.action === 'accountState')
       return output_(accountState_(props, request.data));
+    if (request.action === 'recordCheckoutIssue')
+      return output_(recordCheckoutIssue_(props, request.data));
     if (request.action === 'listOrders')
       return output_(listOrders_(props, request.data));
     if (request.action === 'findSavedOrder')
@@ -319,6 +326,11 @@ function locate_(tab, col, value) {
 function textCell_(s) {
   return "'" + String(s == null ? '' : s);
 }
+function orderTextCell_(s) {
+  var text = String(s == null ? '' : s);
+  // Preserve leading zeroes and keep formula-like input as text.
+  return /^\s*['=+@-]|^0[0-9]+$/.test(text) ? textCell_(text) : text;
+}
 function orderItems_(lines, legacyPrint) {
   return lines
     .map(function (line) {
@@ -373,12 +385,12 @@ function orderRow_(o, fingerprint, date, link) {
     o.id,
     date,
     date ? 'Under review' : 'Saving proof',
-    textCell_(o.contact.name),
+    orderTextCell_(o.contact.name),
     textCell_(o.contact.email),
-    textCell_(o.contact.phone),
-    textCell_(o.contact.affiliation),
-    textCell_(o.contact.roll),
-    textCell_(orderItems_(o.lines)),
+    orderTextCell_(o.contact.phone),
+    orderTextCell_(o.contact.affiliation),
+    orderTextCell_(o.contact.roll),
+    orderTextCell_(orderItems_(o.lines)),
     o.total / 100,
     textCell_(o.utr),
     link,
@@ -485,6 +497,58 @@ function orderGroup_(affiliation, roll) {
 }
 function buyerKey_(buyer) {
   return digest_('MARC Google account\n' + buyer);
+}
+function recordCheckoutIssue_(p, issue) {
+  var now = Date.now();
+  if (!issue || typeof issue.buyer !== 'string' || !issue.buyer ||
+      !ORDER_ID_PATTERN.test(issue.id || '') ||
+      !CHECKOUT_ISSUE_CODES.includes(issue.reason) ||
+      !Number.isSafeInteger(issue.expires) || issue.expires <= now ||
+      issue.expires > now + 7 * 86400000)
+    return { ok: false, code: 'invalid' };
+  var book = orderBook_(p);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) return { ok: false, code: 'busy' };
+  try {
+    var tab = book.getSheetByName(CHECKOUT_ISSUE_TAB) || book.insertSheet(CHECKOUT_ISSUE_TAB);
+    var width = CHECKOUT_ISSUE_HEADERS.length;
+    if (!tab.getLastRow()) {
+      tab.getRange(1, 1, 1, width).setValues([CHECKOUT_ISSUE_HEADERS]).setFontWeight('bold');
+      tab.setFrozenRows(1);
+    } else if (tab.getRange(1, 1, 1, width).getDisplayValues()[0].join('|') !==
+        CHECKOUT_ISSUE_HEADERS.join('|')) {
+      return { ok: false, code: 'setup' };
+    }
+    var key = buyerKey_(issue.buyer) + ':' + issue.id;
+    var row = locate_(tab, 1, key) || tab.getLastRow() + 1;
+    var maxRows = tab.getMaxRows();
+    if (row > maxRows) tab.insertRowsAfter(maxRows, 100);
+    tab.getRange(row, 1, 1, width).setValues([[
+      key, issue.id, issue.reason, new Date(now).toISOString(),
+      new Date(issue.expires).toISOString()
+    ]]);
+    SpreadsheetApp.flush();
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+function listCheckoutIssues_(book, buyer) {
+  var tab = book.getSheetByName(CHECKOUT_ISSUE_TAB);
+  var count = tab ? tab.getLastRow() - 1 : 0;
+  if (count < 1) return [];
+  var prefix = buyerKey_(buyer) + ':';
+  var now = Date.now();
+  return tab.getRange(2, 1, count, 1).createTextFinder(prefix).findAll().map(function (cell) {
+    return tab.getRange(cell.getRow(), 1, 1, CHECKOUT_ISSUE_HEADERS.length).getValues()[0];
+  }).filter(function (row) {
+    return row[0] === prefix + row[1] && ORDER_ID_PATTERN.test(row[1]) &&
+      CHECKOUT_ISSUE_CODES.includes(row[2]) && new Date(row[4]).getTime() > now;
+  }).sort(function (a, b) {
+    return new Date(b[3]).getTime() - new Date(a[3]).getTime();
+  }).slice(0, 12).map(function (row) {
+    return { id: row[1], reason: row[2] };
+  });
 }
 function orderSnapshot_(key, lines) {
   var snapshot = JSON.stringify({ key: key, lines: lines });
@@ -599,8 +663,18 @@ function listOrders_(p, identity) {
     return { ok: false, code: 'invalid_buyer' };
   // Reading needs no lock, so My orders never waits for (or delays) an order
   // being saved. Rows still being saved are skipped by savedOrder_.
-  var tab = orderBook_(p).getSheetByName(ORDER_TAB);
-  if (!tab || tab.getLastRow() < 2) return { ok: true, data: [] };
+  var book = orderBook_(p);
+  var tab = book.getSheetByName(ORDER_TAB);
+  var result = { ok: true, data: [] };
+  if (identity.includeCheckoutIssues === true) {
+    // A problem reading the issue list must leave ordinary order history available.
+    try {
+      result.issues = listCheckoutIssues_(book, identity.buyer);
+    } catch (error) {
+      result.issues = [];
+    }
+  }
+  if (!tab || tab.getLastRow() < 2) return result;
   var columns = existingOrderColumns_(tab), lock = null;
   if (!columns) {
     // Adding the newer columns changes the sheet, so that one-off case locks.
@@ -651,7 +725,8 @@ function listOrders_(p, identity) {
     orders.sort(function (a, b) {
       return b.submittedAt.localeCompare(a.submittedAt) || a.id.localeCompare(b.id);
     });
-    return { ok: true, data: orders };
+    result.data = orders;
+    return result;
   } finally {
     if (lock) lock.releaseLock();
   }
@@ -818,8 +893,8 @@ function finishOrder_(tab, columns, o, evidence, link) {
   if (o.upiReference)
     tab.getRange(row, columns.upiReference).setValues([[textCell_(o.upiReference)]]);
   writePrintColumns_(tab, row, columns, print);
-  var cells = tab.getRange(row, 1, 1, HEADINGS.length);
-  cells.setValues([orderRow_(o, evidence.fingerprint, when, link)]);
+  tab.getRange(row, 1, 1, HEADINGS.length)
+    .setValues([orderRow_(o, evidence.fingerprint, when, link)]);
   SpreadsheetApp.flush();
   var saved = tab
     .getRange(row, 1, 1, Math.max.apply(null, Object.values(columns)))
@@ -1044,10 +1119,9 @@ function products_(rows) {
     groups = new Map();
   rows.forEach(function (choice) {
     var row = parseSku_(choice.getValue());
-    var group = JSON.stringify([
-      row.name.toLowerCase(),
-      row.colour.toLowerCase()
-    ]);
+    var groupValues = [row.name.toLowerCase(), row.colour.toLowerCase()];
+    if (/^GIRLS-/i.test(row.sku)) groupValues.push('girls');
+    var group = JSON.stringify(groupValues);
     var size = group + ':' + row.size.toLowerCase();
     if (codes.has(row.sku) || sizes.has(size))
       throw Error('Duplicate SKU or size: ' + row.sku);
@@ -1433,7 +1507,7 @@ function moveExistingPrintDetails() {
           return;
         writePrintColumns_(tab, rowNumber, columns, print);
         SpreadsheetApp.flush();
-        tab.getRange(rowNumber, 9).setValues([[textCell_(orderItems_(lines))]]);
+        tab.getRange(rowNumber, 9).setValues([[orderTextCell_(orderItems_(lines))]]);
         moved++;
       });
       SpreadsheetApp.flush();
