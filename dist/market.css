@@ -195,7 +195,7 @@ summary:focus-visible {
   height: 5px;
   border: 1.6px solid currentColor;
   border-bottom: 0;
-  border-radius: 5px 5px 0 0;
+  border-radius: 50% 50% 0 0;
   top: -6px;
   left: 2px;
 }
@@ -1542,3 +1542,77 @@ input, select { min-width: 0; max-width: 100%; }
 }
 .checkout-main article h2 { margin-top: 1em; }
 .foot > span > a { font-size: .8125rem; }
+
+/* Centered layout for the existing MARC footer. */
+@supports selector(footer:has(> .foot)) {
+  footer:has(> .foot) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 12px;
+    padding: clamp(32px, 4vw, 48px) clamp(16px, 4vw, 32px);
+    text-align: center;
+  }
+
+  footer > .foot,
+  footer > .foot > div:has(> .credit) {
+    display: contents;
+  }
+
+  footer > .foot > :first-child {
+    order: -1;
+  }
+
+  footer .footer-brand {
+    flex-direction: column;
+    align-items: center;
+    gap: 22px;
+  }
+
+  footer .footer-logo {
+    box-sizing: border-box;
+    width: 132px;
+    height: 96px;
+    padding: 14px 24px;
+    border-radius: 20px;
+    background: #fff;
+    object-fit: contain;
+  }
+
+  footer .footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 16px;
+  }
+
+  footer .footer-links > span {
+    flex-basis: 100%;
+    font-size: 18px;
+    line-height: 1.35;
+  }
+
+  footer > .order-support {
+    order: 1;
+    width: min(100%, 64rem);
+    margin: 0;
+    padding: 0;
+    line-height: 1.5;
+  }
+
+  footer .foot .credit {
+    justify-content: center;
+  }
+
+  footer .foot .credit + .credit {
+    order: 2;
+    width: min(100%, 42rem);
+    margin-top: 8px;
+    padding-top: 18px;
+    border-top: 1px solid rgb(255 255 255 / 18%);
+  }
+
+  footer:has(> .foot) a {
+    overflow-wrap: anywhere;
+  }
+}
