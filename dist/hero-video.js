@@ -47,35 +47,41 @@ export function setupHeroVideo() {
   const hero = document.getElementById('store-hero');
   const stage = document.getElementById('hero-stage');
   const video = document.getElementById('hero-video');
-  const control = document.getElementById('hero-video-toggle');
   const banners = document.getElementById('home-banners');
   const promotions = document.getElementById('hero-promotions');
   const grid = stage?.querySelector('.hero-grid');
-  if (!hero || !stage || !video || !control || !grid || !banners || !promotions)
+  if (!hero || !stage || !video || !grid || !banners || !promotions)
     return () => {};
 
   const phone = matchMedia('(max-width: 680px)');
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const connection = navigator.connection;
   const failed = new Set();
-  let clips = [], key = '', current = 0, visible = true, pausedByVisitor = false;
+  let clips = [], key = '', current = 0, visible = true;
 
   function placeBanners(active) {
     hero.classList.toggle('hero--video', active);
-    control.hidden = !active;
     const parent = active ? promotions : grid;
     if (banners.parentElement !== parent) parent.append(banners);
   }
 
-  function setControlLabel() {
-    control.textContent = video.paused || video.ended ? 'Play video' : 'Pause video';
+  function showBanners() {
+    placeBanners(false);
+    delete stage.dataset.videoReady;
+    if (video.hasAttribute('src')) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    }
   }
 
   function updatePlayback() {
-    if (video.getAttribute('src') && visible && !document.hidden && !pausedByVisitor) {
-      // Muted autoplay can still be blocked by the browser. The play button
-      // allows the visitor to start the video with a tap.
-      void video.play().catch(setControlLabel);
+    const source = video.getAttribute('src');
+    if (source && visible && !document.hidden) {
+      void video.play().catch((error) => {
+        if (error.name === 'NotAllowedError' && video.getAttribute('src') === source)
+          showBanners();
+      });
     } else {
       video.pause();
     }
@@ -88,13 +94,7 @@ export function setupHeroVideo() {
       ? clip[phone.matches ? 'mobile' : 'desktop']
       : '';
     if (!source) {
-      placeBanners(false);
-      delete stage.dataset.videoReady;
-      if (video.hasAttribute('src')) {
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-      }
+      showBanners();
       return;
     }
     video.loop = clips.length - failed.size === 1;
@@ -106,7 +106,6 @@ export function setupHeroVideo() {
     } else if (video.ended) {
       video.currentTime = 0;
     }
-    setControlLabel();
     updatePlayback();
   }
 
@@ -125,17 +124,12 @@ export function setupHeroVideo() {
     showClip();
   }
 
-  for (const event of ['play', 'pause', 'ended']) video.addEventListener(event, setControlLabel);
   video.addEventListener('loadeddata', () => { stage.dataset.videoReady = ''; });
   video.addEventListener('ended', nextClip);
   video.addEventListener('error', () => {
     if (!video.error || !video.hasAttribute('src')) return;
     failed.add(current);
     nextClip();
-  });
-  control.addEventListener('click', () => {
-    pausedByVisitor = !video.paused;
-    updatePlayback();
   });
   phone.addEventListener('change', reset);
   reducedMotion.addEventListener('change', reset);

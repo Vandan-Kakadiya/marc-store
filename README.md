@@ -160,7 +160,7 @@ The storefront loads the latest published catalogue from Vercel. The customer ca
 3. Keep the video files in `dist/assets/videos/` in GitHub. For future campaigns, add a desktop and phone MP4 there and add one Form option per pair in the same format. Direct public HTTPS links to MP4 files also work.
 4. Save the Form. The existing catalogue sync picks up the change on its next check. To request a build immediately, run **publishCatalogueIfChanged** in Apps Script and wait for the Vercel deployment to finish.
 
-The first valid option plays first. Up to six pairs play in Form order. A single video loops. Delete the question or remove the video options to restore the regular homepage banner layout. Visitors can pause the video, and the regular layout appears when their browser requests reduced motion or data savings.
+The first valid option plays first. Up to six pairs play in Form order. A single video loops. Delete the question or remove the video options to restore the regular homepage banner layout. The regular layout appears if the browser blocks autoplay or requests reduced motion or data savings.
 
 ## 7. Test and reconcile an order on the existing domain
 

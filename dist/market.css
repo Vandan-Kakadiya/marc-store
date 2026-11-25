@@ -244,23 +244,9 @@ summary:focus-visible {
 }
 .hero--video .hero-copy {
   width: min(40vw, 740px);
-  padding-bottom: max(80px, 4vw);
 }
 .hero--video .hero-copy h1 {
   font-size: clamp(49px, 7.4vw, 145px);
-}
-.hero-video-toggle {
-  position: absolute;
-  inset: auto auto 16px clamp(16px, 4vw, 76px);
-  min-height: 44px;
-  padding: 6px 12px;
-  border: 1px solid #f8f6f288;
-  border-radius: 4px;
-  background: #20234f;
-  color: white;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
 }
 .hero-promotions:not(:has(.campaign:not([hidden]))) {
   display: none;
@@ -1291,12 +1277,6 @@ details summary {
   .hero--video .hero-intro {
     font-size: clamp(13px, 3.6vw, 16px);
     margin: 9px 0 12px;
-  }
-  .hero--video .hero-copy .kicker {
-    margin-right: 92px;
-  }
-  .hero-video-toggle {
-    inset: 8px clamp(16px, 4vw, 76px) auto auto;
   }
   :root {
     --mast-height: 60px;
