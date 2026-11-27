@@ -448,19 +448,24 @@ function createProductViews(row, sizes) {
 
   const media = node('div', 'detail-media');
   const track = node('div', 'gallery-track product-view-track');
-  const tabs = node('div', 'gallery-controls product-pagination');
+  const tabs = node('div', 'product-tabs');
   tabs.setAttribute('role', 'tablist');
   tabs.setAttribute('aria-label', 'Product information');
+  const pagination = node('div', 'gallery-controls product-pagination');
+  pagination.setAttribute('role', 'group');
+  pagination.setAttribute('aria-label', 'Product slide controls');
   const views = [
     ['photos', 'Photos', photos],
     ['details', 'Details', details],
     ['size-chart', 'Size chart', createSizeChart(row, sizes)]
   ].map(([id, label, content], index) => {
-    const tab = btn('', 'gallery-dot', () => showView(index));
+    const show = () => showView(index);
+    const tab = btn(label, 'product-tab', show);
     tab.id = 'product-tab-' + id;
-    tab.title = label;
-    tab.setAttribute('aria-label', label);
     tab.setAttribute('role', 'tab');
+    const dot = btn('', 'gallery-dot', show);
+    dot.title = label;
+    dot.setAttribute('aria-label', 'Show ' + label.toLowerCase());
     const panel = node('div', 'product-panel');
     panel.id = 'product-panel-' + id;
     panel.setAttribute('role', 'tabpanel');
@@ -468,19 +473,23 @@ function createProductViews(row, sizes) {
     panel.tabIndex = 0;
     panel.append(content);
     tab.setAttribute('aria-controls', panel.id);
+    dot.setAttribute('aria-controls', panel.id);
     tabs.append(tab);
     track.append(panel);
-    return { tab, panel };
+    pagination.append(dot);
+    return { tab, dot, panel };
   });
-  media.append(track, tabs);
+  media.append(tabs, track, pagination);
 
   function selectView(index) {
     const focusWasInPanel = track.contains(document.activeElement);
     activeProductView = index;
-    views.forEach(({ tab, panel }, position) => {
+    views.forEach(({ tab, dot, panel }, position) => {
       const current = position === index;
       tab.tabIndex = current ? 0 : -1;
       tab.setAttribute('aria-selected', String(current));
+      dot.tabIndex = tab.tabIndex;
+      dot.setAttribute('aria-current', String(current));
       panel.inert = !current;
     });
     if (focusWasInPanel) views[index].panel.focus({ preventScroll: true });
@@ -493,8 +502,10 @@ function createProductViews(row, sizes) {
     const index = Math.max(0, Math.min(views.length - 1, Math.round(track.scrollLeft / track.clientWidth)));
     if (index !== activeProductView) selectView(index);
   }, { passive: true });
-  tabs.addEventListener('keydown', (event) => {
-    const index = views.findIndex(({ tab }) => tab === event.target);
+  function handleViewKey(event) {
+    const control = event.currentTarget === tabs ? 'tab' : 'dot';
+    const index = views.findIndex((view) => view[control] === event.target);
+    if (index < 0) return;
     const next = {
       ArrowLeft: (index + views.length - 1) % views.length,
       ArrowRight: (index + 1) % views.length,
@@ -503,9 +514,11 @@ function createProductViews(row, sizes) {
     }[event.key];
     if (!Number.isInteger(next)) return;
     event.preventDefault();
-    views[next].tab.focus();
+    views[next][control].focus();
     showView(next);
-  });
+  }
+  tabs.addEventListener('keydown', handleViewKey);
+  pagination.addEventListener('keydown', handleViewKey);
   selectView(activeProductView);
   if (activeProductView) requestAnimationFrame(() => showView(activeProductView, 'instant'));
   return media;
