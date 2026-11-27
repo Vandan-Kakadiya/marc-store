@@ -120,9 +120,97 @@
       #products[hidden] + #girls-edition {
         margin-top: 20px;
       }
+
+      #product .product-view-track {
+        height: var(--detail-photo-height);
+        overflow-y: hidden;
+        border-radius: 8px;
+      }
+
+      #product .product-view-track::-webkit-scrollbar {
+        display: none;
+      }
+
+      #product .product-panel {
+        flex: 0 0 100%;
+        min-width: 0;
+        overflow-y: auto;
+        scroll-snap-align: start;
+        scroll-snap-stop: always;
+      }
+
+      #product .product-panel .detail-facts {
+        min-height: 100%;
+        align-content: start;
+      }
+
+      #product .product-panel .detail-photo,
+      #product .product-photos {
+        height: 100%;
+        aspect-ratio: auto;
+      }
+
+      #product .product-photos {
+        position: relative;
+      }
+
+      #product .product-photo-step {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 42px;
+        height: 42px;
+        padding: 0 0 3px;
+        border: 1px solid var(--rule);
+        border-radius: 50%;
+        background: #fff;
+        color: var(--deep);
+        font-size: 28px;
+        line-height: 1;
+      }
+
+      #product .product-photo-previous {
+        inset-inline-start: 8px;
+      }
+
+      #product .product-photo-next {
+        inset-inline-end: 8px;
+      }
+
+      #product .product-pagination .gallery-dot {
+        width: auto;
+        min-width: 24px;
+        padding-inline: 4px;
+      }
+
+      #product .product-pagination .gallery-dot::before {
+        width: 9px;
+        height: 9px;
+        border: 0;
+        border-radius: 999px;
+        background: #c8d6e4;
+      }
+
+      #product .product-pagination .gallery-dot[aria-selected="true"]::before {
+        width: 30px;
+        background: var(--deep);
+      }
+
+      @media (prefers-reduced-motion: no-preference) {
+        #product .product-pagination .gallery-dot::before {
+          transition: width 180ms ease, background-color 180ms ease;
+        }
+      }
+
+      @media (max-width: 680px) {
+        #product .product-view-track {
+          height: auto;
+          aspect-ratio: 4 / 3;
+        }
+      }
     </style>
     <script id="catalogue-snapshot" type="application/json"></script>
-    <script type="module" src="market.js?v=22"></script>
+    <script type="module" src="market.js?v=23"></script>
   </head>
   <body class="store-home">
     <div id="store-loading" role="status" hidden>

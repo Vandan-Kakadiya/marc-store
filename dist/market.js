@@ -33,7 +33,7 @@ let catalog = published || cachedCatalogue(),
   activeGroup = '',
   refreshTime = published ? Date.now() : 0;
 let toastTimer, activeProductMedia, activeBanners;
-let activeProductTab = 0;
+let activeProductView = 0;
 const girlsSection = $('girls-edition');
 const girlsProducts = $('girls-products');
 const isGirlsEdition = (row) => /^GIRLS-/i.test(row.sku);
@@ -234,19 +234,32 @@ function openProduct(rows) {
   selected = rows.length === 1 ? rows[0].sku : '';
   selectedQuantity = 1;
   activeProductMedia = null;
-  activeProductTab = 0;
+  activeProductView = 0;
   renderProduct(rows);
   $('product').showModal();
   $('product-body').scrollTop = 0;
 }
-function createGallery(photos) {
-  const gallery = node('div', 'product-gallery');
-  gallery.setAttribute('role', 'group');
-  gallery.setAttribute('aria-label', 'Product photos');
-  const track = node('div', 'gallery-track');
-  track.append(...photos.map((row) => picture(row, 'detail-photo')));
-  gallery.append(track);
-  setupCarousel(gallery, track, 'photo');
+function createProductPhotos(row) {
+  const main = picture(row, 'detail-photo');
+  const extras = row.extraImages ?? [];
+  if (!extras.length) return main;
+
+  const photos = [row, ...extras.map((image) => ({ ...row, image, imageVariants: [] }))];
+  const gallery = node('div', 'product-photos');
+  const status = node('span', 'sr', 'Photo 1 of ' + photos.length);
+  status.setAttribute('aria-live', 'polite');
+  let position = 0;
+
+  function stepPhoto(step) {
+    position = (position + step + photos.length) % photos.length;
+    gallery.firstElementChild.replaceWith(picture(photos[position], 'detail-photo'));
+    status.textContent = 'Photo ' + (position + 1) + ' of ' + photos.length;
+  }
+  const previous = btn('‹', 'product-photo-step product-photo-previous', () => stepPhoto(-1));
+  const next = btn('›', 'product-photo-step product-photo-next', () => stepPhoto(1));
+  previous.setAttribute('aria-label', 'Previous product photo');
+  next.setAttribute('aria-label', 'Next product photo');
+  gallery.append(main, previous, next, status);
   return gallery;
 }
 function renderHomepageBanners() {
@@ -421,11 +434,8 @@ function createSizeChart(row, sizes) {
   appendProductInfoImage(chart, row.sizeChart, row.name + ' size chart', message);
   return chart;
 }
-function createProductTabs(row, sizes) {
-  const extras = row.extraImages ?? [];
-  const photos = extras.length
-    ? createGallery([row, ...extras.map((image) => ({ ...row, image, imageVariants: [] }))])
-    : picture(row, 'detail-photo');
+function createProductViews(row, sizes) {
+  const photos = createProductPhotos(row);
   const details = node('div', 'detail-facts');
   if (row.details) details.append(node('p', '', row.details));
   appendProductInfoImage(details, row.detailsImage, row.name + ' details');
@@ -437,17 +447,19 @@ function createProductTabs(row, sizes) {
   details.append(facts);
 
   const media = node('div', 'detail-media');
-  const tabs = node('div', 'product-tabs');
+  const track = node('div', 'gallery-track product-view-track');
+  const tabs = node('div', 'gallery-controls product-pagination');
   tabs.setAttribute('role', 'tablist');
   tabs.setAttribute('aria-label', 'Product information');
-  media.append(tabs);
   const views = [
     ['photos', 'Photos', photos],
     ['details', 'Details', details],
     ['size-chart', 'Size chart', createSizeChart(row, sizes)]
   ].map(([id, label, content], index) => {
-    const tab = btn(label, 'product-tab', () => selectTab(index));
+    const tab = btn('', 'gallery-dot', () => showView(index));
     tab.id = 'product-tab-' + id;
+    tab.title = label;
+    tab.setAttribute('aria-label', label);
     tab.setAttribute('role', 'tab');
     const panel = node('div', 'product-panel');
     panel.id = 'product-panel-' + id;
@@ -457,18 +469,30 @@ function createProductTabs(row, sizes) {
     panel.append(content);
     tab.setAttribute('aria-controls', panel.id);
     tabs.append(tab);
-    media.append(panel);
+    track.append(panel);
     return { tab, panel };
   });
-  function selectTab(index) {
-    activeProductTab = index;
+  media.append(track, tabs);
+
+  function selectView(index) {
+    const focusWasInPanel = track.contains(document.activeElement);
+    activeProductView = index;
     views.forEach(({ tab, panel }, position) => {
-      const selectedTab = position === index;
-      tab.tabIndex = selectedTab ? 0 : -1;
-      tab.setAttribute('aria-selected', String(selectedTab));
-      panel.hidden = !selectedTab;
+      const current = position === index;
+      tab.tabIndex = current ? 0 : -1;
+      tab.setAttribute('aria-selected', String(current));
+      panel.inert = !current;
     });
+    if (focusWasInPanel) views[index].panel.focus({ preventScroll: true });
   }
+  function showView(index, behavior = 'auto') {
+    track.scrollTo({ left: index * track.clientWidth, behavior });
+  }
+  track.addEventListener('scroll', () => {
+    if (!track.clientWidth) return;
+    const index = Math.max(0, Math.min(views.length - 1, Math.round(track.scrollLeft / track.clientWidth)));
+    if (index !== activeProductView) selectView(index);
+  }, { passive: true });
   tabs.addEventListener('keydown', (event) => {
     const index = views.findIndex(({ tab }) => tab === event.target);
     const next = {
@@ -479,10 +503,11 @@ function createProductTabs(row, sizes) {
     }[event.key];
     if (!Number.isInteger(next)) return;
     event.preventDefault();
-    selectTab(next);
     views[next].tab.focus();
+    showView(next);
   });
-  selectTab(activeProductTab);
+  selectView(activeProductView);
+  if (activeProductView) requestAnimationFrame(() => showView(activeProductView, 'instant'));
   return media;
 }
 function renderProductLayout(rows, info) {
@@ -493,7 +518,7 @@ function renderProductLayout(rows, info) {
     product.name, product.colour, sizes, product.image, product.imageVariants,
     product.extraImages, product.details, product.detailsImage, product.sizeChart
   ]);
-  // Keep the selected tab and photo when the shopper changes size.
+  // Keep the selected view and photo when the shopper changes size.
   if (activeProductMedia === media) {
     body.lastElementChild.replaceWith(info);
     return;
@@ -503,7 +528,7 @@ function renderProductLayout(rows, info) {
   const title = node('h2', '', product.name);
   title.id = 'product-title';
   header.append(title, node('p', 'modal-sub', product.colour));
-  body.replaceChildren(header, createProductTabs(product, sizes), info);
+  body.replaceChildren(header, createProductViews(product, sizes), info);
 }
 function renderProduct(rows) {
   if (!rows.some((s) => s.sku === selected))
