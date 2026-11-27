@@ -235,8 +235,9 @@
         }
       }
     </style>
+    <link rel="stylesheet" href="marc-ui.css?v=1" />
     <script id="catalogue-snapshot" type="application/json"></script>
-    <script type="module" src="market.js?v=24"></script>
+    <script type="module" src="market.js?v=25"></script>
   </head>
   <body class="store-home">
     <div id="store-loading" role="status" hidden>
@@ -321,6 +322,16 @@
               aria-label="Homepage promotions"
               hidden
             ></div>
+            <figure class="hero-fallback">
+              <img
+                src="assets/marc-store-banner.webp"
+                width="1536"
+                height="1024"
+                alt="MARC campaign featuring IIM Trichy merchandise"
+                loading="lazy"
+                decoding="async"
+              />
+            </figure>
           </div>
         </div>
         <div id="hero-promotions" class="wrap hero-promotions"></div>
@@ -330,7 +341,7 @@
           <div>
             <h2 id="shop-title">SHOP MERCHANDISE</h2>
           </div>
-          <span id="result-count" class="count-label"></span>
+          <span id="result-count" class="count-label" aria-live="polite"></span>
         </div>
         <div id="filters" class="filters" hidden>
           <label class="search-label"
@@ -345,6 +356,7 @@
               <option value="">All products</option>
             </select></label
           >
+          <button type="button" class="text-btn" id="clear-filters" hidden>Clear filters</button>
         </div>
         <p class="status" id="catalog-status" role="status"></p>
         <button class="text-btn" id="retry" hidden>Retry catalogue</button>

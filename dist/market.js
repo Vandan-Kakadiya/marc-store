@@ -36,6 +36,7 @@ let toastTimer, activeProductMedia, activeBanners;
 let activeProductView = 0;
 const girlsSection = $('girls-edition');
 const girlsProducts = $('girls-products');
+const clearFilters = $('clear-filters');
 const isGirlsEdition = (row) => /^GIRLS-/i.test(row.sku);
 const groupKey = ([row]) =>
   JSON.stringify([row.name.toLowerCase(), row.colour.toLowerCase(), isGirlsEdition(row)]);
@@ -155,6 +156,7 @@ function repaint(dialogs = false) {
     ? ''
     : $('search').value.toLowerCase().trim();
   const filter = $('filters').hidden ? '' : type.value;
+  if (clearFilters) clearFilters.hidden = !query && !filter;
   let shown = 0;
   let shownGirls = 0;
   for (const { rows, card, text } of cards) {
@@ -566,7 +568,16 @@ function renderProduct(rows) {
     sizes.append(b);
   }
   const sizeOptions = node('div');
-  sizeOptions.append(node('p', 'option-label', 'Size / option'), sizes);
+  const sizeHeading = node('div', 'size-heading');
+  sizeHeading.append(node('p', 'option-label', 'Size / option'));
+  if (photo({ image: rows[0].sizeChart }, false)) {
+    sizeHeading.append(btn('Size chart', 'size-chart-shortcut', () => {
+      const tab = $('product-tab-size-chart');
+      tab?.focus();
+      tab?.click();
+    }));
+  }
+  sizeOptions.append(sizeHeading, sizes);
   const quantityOptions = node('div', 'product-quantity');
   const quantityControl = node('div', 'control');
   quantityControl.setAttribute('role', 'group');
@@ -783,6 +794,12 @@ for (const b of document.querySelectorAll('[data-close]'))
   b.onclick = () => $(b.dataset.close).close();
 $('search').oninput = () => repaint();
 $('type').onchange = () => repaint();
+clearFilters?.addEventListener('click', () => {
+  $('search').value = '';
+  $('type').value = '';
+  repaint();
+  $('search').focus();
+});
 window.addEventListener('storage', (e) => {
   if (e.key === BAG) repaint(true);
 });
